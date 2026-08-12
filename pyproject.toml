@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "public-repo-generator"
+version = "0.1.0"
+description = "Generates a public repo from a private repo's release tags."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Go Nakamaru" }]
+keywords = ["cli", "git", "release", "repository", "publishing"]
+dependencies = []
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Utilities",
+]
+
+# Local tooling, never shipped. A dependency group stays out of the wheel and
+# off PyPI, which an optional-dependencies extra would not. Install with
+# `pip install -e . --group dev` (needs pip 25.1+). The ruff and black pins are
+# exact on purpose: the pin is what freezes ruff's default rule set.
+[dependency-groups]
+dev = [
+    "black==25.11.0",
+    "pytest",
+    "pytest-cov",
+    "ruff==0.16.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/east-van-ai/public-repo-generator"
+
+[project.scripts]
+prg = "prg.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.pytest.ini_options]
+# Capture at the sys level, not the file descriptor level. fd capture
+# intercepts descriptors 1 and 2, which a child process inherits, so it
+# changes what a test that shells out to the CLI actually sees. Deliberate,
+# and kept.
+addopts = "--capture=sys"
+testpaths = ["tests"]
