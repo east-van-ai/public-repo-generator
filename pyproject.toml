@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "public-repo-generator"
-version = "0.1.0"
+version = "0.2.0"
 description = "Generates a public repo from a private repo's release tags."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "Go Nakamaru" }]
-keywords = ["cli", "git", "release", "repository", "publishing"]
+keywords = ["cli", "git", "release", "repository", "publishing", "showcase"]
 dependencies = []
 classifiers = [
     "Environment :: Console",

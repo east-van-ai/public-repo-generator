@@ -4,10 +4,12 @@ This layer knows how to talk to git and nothing about why. Which tags count
 as releases, what timestamp they get, and what order they land in are policy,
 and policy lives in `generator.py`.
 
-Read-only for now. The write side (init, commit, tag, gc) arrives with the
-pipeline that needs it, so nothing here has a caller yet.
+Read and write both. No reflog expiry and no `gc`: a repo built commit by
+commit out of nothing holds nothing unreachable, and its reflog already carries
+the manufactured dates. See DESIGN.md, "Clean room, not history rewriting".
 """
 
+import os
 import subprocess
 
 
@@ -105,19 +107,60 @@ def commit_date(path, rev):
     return stamp
 
 
-def tag_message(path, tag):
-    """Return the tag's annotation, or "" for a lightweight tag.
+def init(path, branch):
+    """Create an empty repo at `path`, with `branch` unborn.
 
-    The object type is checked first, and it has to be. A lightweight tag is
-    a ref straight to a commit, so asking git for its contents hands back the
-    commit's own message. That message is private, and it must not reach the
-    public log by way of a tag that never carried one.
-
-    A name that matches no tag also answers "", since git reports an empty
-    list rather than failing.
+    `symbolic-ref` rather than `git init --initial-branch`, which arrived in
+    git 2.28. The pair works on any git old enough to run the rest of prg,
+    and it leaves the branch unborn either way, so the first commit is the
+    one that creates it.
     """
-    listed = run_git(
-        ["tag", "--list", tag, "--format=%(objecttype)%0a%(contents)"], cwd=path
+    run_git(["init", "--quiet"], cwd=path)
+    run_git(["symbolic-ref", "HEAD", f"refs/heads/{branch}"], cwd=path)
+
+
+def commit_empty(path, message, stamp, identity=None):
+    """Record a commit carrying no tree at all, at a fixed date.
+
+    Both dates take `stamp`. Setting only the author date would leave the
+    committer date at "now", so the log would show one uniform time beside
+    one real one.
+
+    `identity` is a name and email pair, or None to let git use whatever is
+    configured where prg runs. The environment is added to rather than
+    replaced, since git still needs PATH and HOME.
+
+    Hooks are off permanently. These commits are manufactured, and prg closes
+    stdin, so a hook that stops to ask has no terminal to ask on.
+
+    `--no-gpg-sign` overrides `commit.gpgsign`, so a machine configured to sign
+    has that switched off here. It is a suppression waiting to be lifted rather
+    than a decision to keep. See DESIGN.md, "Signing is opt-in".
+    """
+    env = dict(os.environ)
+    env["GIT_AUTHOR_DATE"] = stamp.isoformat()
+    env["GIT_COMMITTER_DATE"] = stamp.isoformat()
+    if identity is not None:
+        name, email = identity
+        env["GIT_AUTHOR_NAME"] = name
+        env["GIT_AUTHOR_EMAIL"] = email
+        env["GIT_COMMITTER_NAME"] = name
+        env["GIT_COMMITTER_EMAIL"] = email
+
+    run_git(
+        # --allow-empty is what makes a commit with no tree possible, and it
+        # leaves with the trees. An empty tree is an error once there is one.
+        ["commit", "--allow-empty", "--no-verify", "--no-gpg-sign", "-m", message],
+        cwd=path,
+        env=env,
     )
-    kind, _, contents = listed.partition("\n")
-    return contents.strip() if kind == "tag" else ""
+
+
+def tag(path, name):
+    """Put a lightweight tag on HEAD.
+
+    No `-a` and no `-m`, so nothing is written but the ref. Nothing written
+    means nothing to leak, and no tagger date to keep in step with the
+    commit's own.
+    """
+    run_git(["tag", name], cwd=path)

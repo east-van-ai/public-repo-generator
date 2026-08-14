@@ -13,7 +13,7 @@
 # Usage:
 #
 #    prg generate SOURCE TARGET [--dry-run | --commit] [options]
-#    prg inspect SOURCE
+#    prg inspect SOURCE [options]
 #
 # Commands:
 #
@@ -23,22 +23,22 @@
 # SOURCE  an existing git repo, for `generate` and `inspect`.
 # TARGET  the public repo. `generate` requires that it does not exist yet.
 #
-# Options for `generate`:
+# Run a command with nothing else after it for its own documentation,
+# including the options it takes:
 #
-#    --tz {local,gmt}    timezone for the uniform timestamp (default: local)
-#    --time HH:MM:SS     fixed time for every commit (default: 12:00:00)
-#    --author IDENTITY   "Name <email>" for author and committer
-#    --weed-out CMD      path to the weed-out sanitizer (default: weed-out)
-#    --start TAG         begin from this release tag (default: earliest v*)
-#    --dry-run           report the plan and write nothing. The default.
-#    --commit            actually build the repo.
+#    prg generate
+#    prg inspect
 #
-# Flags come after the command and its paths. Their order among themselves is
-# free. Bare `prg` prints this help.
+# Paths come first, then flags, whose order among themselves is free. Bare
+# `prg` prints this text and exits 0. Asking is not a usage error.
 #
-# STATUS: blueprint. The CLI surface below is settled, and the git layer in
-# gitio.py works. The pipeline behind `generate` does not. See DESIGN.md for
-# the reasoning.
+# prg reads no piped input.
+#
+# Exit codes:
+#
+#    0:     success, and documentation
+#    1:     prg's own error, a path missing or one too many included
+#    2:     an unknown command, an unknown flag, or a bad value
 #
 # License: MIT
 # ==============================================
@@ -46,21 +46,116 @@
 
 import argparse
 import sys
+from collections import namedtuple
+from datetime import time
 
+from prg import cli_generate, cli_inspect
 from prg.generator import (
     DEFAULT_TIME,
     DEFAULT_TZ,
     DEFAULT_WEED_OUT,
-    PRG,
     RELEASE_TAG_PATTERN,
+    PRGError,
 )
 
+# Exit codes. 0 is success, and documentation too, since asking what a command
+# does is not an error. 1 is prg's own: a path slot short, a path too many, or
+# anything the pipeline raises. 2 is argparse's, for the vocabulary it owns,
+# an unknown command, an unknown flag, a bad value.
+#
+# Only the first two return through `main`. Argparse calls `sys.exit` itself,
+# so 2 arrives as a SystemExit unwinding past `main`, and a test for it catches
+# rather than compares. See DESIGN.md, "Positions are decided, not inferred",
+# for where the 1/2 line falls and why.
 EXIT_OK = 0
 EXIT_ERROR = 1
+EXIT_ARGPARSE = 2  # argparse hardcodes it in `ArgumentParser.error()`
+
+Command = namedtuple("Command", "module slots")
+"""A command word's module, and the path slots it reads.
+
+The module carries its own documentation, usage line, and action, so the
+table only adds what the command line itself decides.
+"""
+
+COMMANDS = {
+    "generate": Command(cli_generate, ("SOURCE", "TARGET")),
+    "inspect": Command(cli_inspect, ("SOURCE",)),
+}
+
+
+def clock_time(value):
+    """Parse an HH:MM:SS argument, for argparse's `type=`.
+
+    Raising here puts a bad `--time` in argparse's own vocabulary, exit 2,
+    alongside the bad `--tz` that `choices` already catches.
+    """
+    try:
+        return time.fromisoformat(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not an HH:MM:SS time: {value!r}") from None
+
+
+def leading_paths(tokens):
+    """Return the tokens ahead of the first flag.
+
+    The documented grammar puts every path before every flag, so the slots
+    are read off the front of the command line. What argparse resolved from
+    anywhere else is discarded, since how much it tolerates depends on the
+    interpreter. See DESIGN.md, "Positions are decided, not inferred".
+    """
+    paths = []
+    for token in tokens:
+        if token.startswith("-"):
+            break
+        paths.append(token)
+    return paths
+
+
+def usage_error(command, message):
+    """Report one of prg's own errors, with the offending command's usage."""
+    print(f"prg: {message}", file=sys.stderr)
+    print(f"Usage: {command.module.USAGE}", file=sys.stderr)
+    return EXIT_ERROR
+
+
+def add_plan_flags(parser):
+    """Add the flags deciding which releases cross over and what stamp they get.
+
+    `generate` and `inspect` share all three, and they have to. A preview
+    whose stamps came from different defaults would be previewing a build
+    nobody is going to run.
+    """
+    parser.add_argument(
+        "--tz",
+        choices=["local", "gmt"],
+        default=DEFAULT_TZ,
+        help="Timezone for the uniform timestamp (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--time",
+        type=clock_time,
+        # Converted here rather than left as a string, so the default and a
+        # supplied value arrive as the same type without leaning on argparse
+        # putting string defaults through `type` for us.
+        default=clock_time(DEFAULT_TIME),
+        metavar="HH:MM:SS",
+        help=f"Fixed time for every commit (default: {DEFAULT_TIME})",
+    )
+    parser.add_argument(
+        "--start",
+        metavar="TAG",
+        help=f"Begin from this release tag (default: earliest {RELEASE_TAG_PATTERN})",
+    )
 
 
 def build_parser():
-    """Construct the argument parser for the whole CLI."""
+    """Construct the argument parser for the whole CLI.
+
+    Positional paths are optional to argparse, so that a bare command word
+    reaches `main` and gets an answer instead of a usage error. Their parsed
+    values go unused: `main` reads the slots itself.
+    """
     parser = argparse.ArgumentParser(
         prog="prg",
         description=(
@@ -70,22 +165,15 @@ def build_parser():
     subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
 
     generate = subparsers.add_parser(
-        "generate", help="Rebuild TARGET from SOURCE's release tags"
-    )
-    generate.add_argument("source", metavar="SOURCE", help="Private repo to read")
-    generate.add_argument("target", metavar="TARGET", help="Public repo to create")
-    generate.add_argument(
-        "--tz",
-        choices=["local", "gmt"],
-        default=DEFAULT_TZ,
-        help="Timezone for the uniform timestamp (default: %(default)s)",
+        "generate", help=cli_generate.HELP, description=cli_generate.HELP
     )
     generate.add_argument(
-        "--time",
-        default=DEFAULT_TIME,
-        metavar="HH:MM:SS",
-        help="Fixed time for every commit (default: %(default)s)",
+        "source", metavar="SOURCE", nargs="?", help="Private repo to read"
     )
+    generate.add_argument(
+        "target", metavar="TARGET", nargs="?", help="Public repo to create"
+    )
+    add_plan_flags(generate)
     generate.add_argument(
         "--author",
         metavar="IDENTITY",
@@ -95,12 +183,7 @@ def build_parser():
         "--weed-out",
         default=DEFAULT_WEED_OUT,
         metavar="CMD",
-        help="Path to the weed-out sanitizer (default: %(default)s)",
-    )
-    generate.add_argument(
-        "--start",
-        metavar="TAG",
-        help=f"Begin from this release tag (default: earliest {RELEASE_TAG_PATTERN})",
+        help="Path to the weed-out sanitizer (default: none, nothing is filtered)",
     )
     mode = generate.add_mutually_exclusive_group()
     mode.add_argument(
@@ -115,49 +198,66 @@ def build_parser():
     )
 
     inspect = subparsers.add_parser(
-        "inspect", help="List the tags that would become commits"
+        "inspect", help=cli_inspect.HELP, description=cli_inspect.HELP
     )
-    inspect.add_argument("source", metavar="SOURCE", help="Private repo to read")
+    inspect.add_argument(
+        "source", metavar="SOURCE", nargs="?", help="Private repo to read"
+    )
+    add_plan_flags(inspect)
 
     return parser
 
 
 def main(argv=None):
-    """Parse arguments, dispatch to PRG, and return an exit code.
+    """Parse arguments, dispatch to a command module, and return an exit code.
 
-    Bare `prg` prints help and exits 0. argparse handles its own errors and
-    exits 2 on its own.
+    A command word and nothing else is a question and gets documentation,
+    exit 0. Any other shortfall in the path slots is a slip and gets an
+    error, exit 1. argparse keeps the vocabulary it owns: an unknown command,
+    an unknown flag, or a bad value, exiting 2.
     """
-    parser = build_parser()
-    args = parser.parse_args(argv)
+    tokens = list(sys.argv[1:] if argv is None else argv)
 
-    if args.command is None:
-        parser.print_help()
+    if not tokens:
+        print(__doc__.strip())
         return EXIT_OK
 
-    if args.command == "generate":
-        prg = PRG(
-            source=args.source,
-            target=args.target,
-            tz=args.tz,
-            time=args.time,
-            author=args.author,
-            weed_out=args.weed_out,
-            start=args.start,
-            commit=args.commit,
-        )
-        action = prg.reconstruct
-    else:
-        action = PRG(source=args.source, target=None).inspect
+    if len(tokens) == 1 and tokens[0] in COMMANDS:
+        print(COMMANDS[tokens[0]].module.__doc__.strip())
+        return EXIT_OK
 
-    try:
-        action()
-    except NotImplementedError:
-        print(
-            f"prg is a blueprint: '{args.command}' is not implemented yet. "
-            "See DESIGN.md.",
-            file=sys.stderr,
+    parser = build_parser()
+    args, extras = parser.parse_known_args(tokens)
+
+    if any(extra.startswith("-") for extra in extras):
+        parser.parse_args(tokens)  # argparse names the flag better, exit 2
+
+    command = COMMANDS[args.command]
+    paths = leading_paths(tokens[1:])
+
+    if len(paths) < len(command.slots):
+        needed = " and ".join(command.slots)
+        if len(command.slots) > 1:
+            needed = f"both {needed}"
+        return usage_error(command, f"{args.command} needs {needed}")
+
+    if len(paths) > len(command.slots):
+        stray = paths[len(command.slots)]
+        last = command.slots[-1]
+        return usage_error(
+            command, f"{args.command} takes nothing after {last}: {stray!r}"
         )
+
+    # Each command's run() takes what that command needs, so the call is spelled
+    # out rather than driven off the table. The table answers what is the same
+    # for every command: its documentation, its usage line, and its slots.
+    try:
+        if args.command == "generate":
+            cli_generate.run(paths[0], paths[1], args)
+        else:
+            cli_inspect.run(paths[0], args)
+    except PRGError as failure:
+        print(f"prg: {failure}", file=sys.stderr)
         return EXIT_ERROR
 
     return EXIT_OK
