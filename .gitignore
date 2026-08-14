@@ -29,3 +29,6 @@ tests/data/*
 # markdownlint
 .markdownlint.json
 .markdownlintignore
+
+# working data directory
+/data/
