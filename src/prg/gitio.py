@@ -1,8 +1,13 @@
-"""Every git invocation prg makes.
+"""Every git invocation prg makes, and the one gpg call that goes with it.
 
 This layer knows how to talk to git and nothing about why. Which tags count
 as releases, what timestamp they get, and what order they land in are policy,
 and policy lives in `generator.py`.
+
+The gpg call is here for the same reason the git ones are: it shells out, and
+it reaches the binary git itself was configured to use. Reading a key's
+addresses is asking the signing backend a question about git's own config,
+not a second concern.
 
 Read and write both. No reflog expiry and no `gc`: a repo built commit by
 commit out of nothing holds nothing unreachable, and its reflog already carries
@@ -10,7 +15,12 @@ the manufactured dates. See DESIGN.md, "Clean room, not history rewriting".
 """
 
 import os
+import re
+import shutil
 import subprocess
+
+# The address inside a gpg user ID, which reads "Name (comment) <email>".
+UID_ADDRESS = re.compile(r"<([^<>]+)>")
 
 
 class GitError(Exception):
@@ -45,6 +55,116 @@ def run_git(args, cwd, env=None):
         raise GitError(f"git {' '.join(args)}: {detail}")
 
     return result.stdout.strip()
+
+
+def git_available():
+    """Return True when a git executable is on PATH.
+
+    `shutil.which` rather than a git invocation, because every other question
+    here needs a directory to ask it in. This one has to answer before there
+    is anywhere to stand.
+    """
+    return shutil.which("git") is not None
+
+
+def ambient_identity(cwd):
+    """Return the configured git identity as "Name <email>", or None.
+
+    `user.useConfigOnly` stops git inventing an identity out of the account
+    name and the hostname, so a refusal here means nothing is configured.
+    Either git config or the `GIT_AUTHOR_NAME` and `GIT_AUTHOR_EMAIL`
+    variables satisfies it, which is git's own resolution order rather than a
+    reimplementation of it.
+
+    `git var` answers with a trailing timestamp and offset, the date it would
+    stamp on a commit made this second. Only the identity is wanted, so the
+    last two fields go.
+    """
+    try:
+        answer = run_git(
+            ["-c", "user.useConfigOnly=true", "var", "GIT_AUTHOR_IDENT"], cwd=cwd
+        )
+    except GitError:
+        return None
+
+    return answer.rsplit(None, 2)[0] or None
+
+
+def ambient_signing(cwd):
+    """Return the configured signing key and format, or None for neither.
+
+    Asked where prg runs, the same place `ambient_identity` asks its own
+    question, and for the same reason: a signing key belongs to the identity
+    being published under rather than to the machine. Standing somewhere else
+    is what selects a different key.
+
+    No `user.signingkey` means no signing at all. A key with no `gpg.format`
+    beside it takes openpgp, which is git's own default rather than a choice
+    made here.
+
+    No key material passes through. These two values name a key, and git and
+    its agent do everything after that.
+    """
+    try:
+        key = run_git(["config", "--get", "user.signingkey"], cwd=cwd)
+    except GitError:
+        return None
+
+    if not key:
+        return None
+
+    try:
+        fmt = run_git(["config", "--get", "gpg.format"], cwd=cwd)
+    except GitError:
+        fmt = ""
+
+    return key, fmt or "openpgp"
+
+
+def signing_key_emails(key, cwd):
+    """Return the addresses an OpenPGP key carries, or None when unanswerable.
+
+    `gpg --list-keys --with-colons` prints one `uid` record per user ID, with
+    the ID itself in the tenth field. Only the address inside the angle
+    brackets is wanted.
+
+    None means the question could not be answered: no gpg on the machine, a key
+    the keyring does not hold, a listing carrying no address. It is not the
+    same answer as "this key carries none of them", and a caller that reads it
+    as one turns an unanswered question into a refusal.
+
+    The program comes from `gpg.program` where that is set, so the binary asked
+    is the binary git would have signed with.
+    """
+    try:
+        program = run_git(["config", "--get", "gpg.program"], cwd=cwd)
+    except GitError:
+        program = ""
+
+    try:
+        listing = subprocess.run(
+            [program or "gpg", "--list-keys", "--with-colons", key],
+            cwd=cwd,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (FileNotFoundError, NotADirectoryError, PermissionError):
+        return None
+
+    if listing.returncode != 0:
+        return None
+
+    emails = set()
+    for line in listing.stdout.splitlines():
+        fields = line.split(":")
+        if fields[0] == "uid" and len(fields) > 9:
+            found = UID_ADDRESS.search(fields[9])
+            if found:
+                emails.add(found.group(1))
+
+    return emails or None
 
 
 def is_repo(path):
@@ -119,38 +239,94 @@ def init(path, branch):
     run_git(["symbolic-ref", "HEAD", f"refs/heads/{branch}"], cwd=path)
 
 
-def commit_empty(path, message, stamp, identity=None):
+def set_identity(path, name, email):
+    """Pin an identity into a repo's own config, and forbid a guessed one.
+
+    None of it reaches the build. prg passes the identity through the
+    environment, and `GIT_AUTHOR_NAME` outranks `user.name`, so this config
+    sits outranked while prg works.
+
+    It is for the commits made in the target by hand afterwards, which would
+    otherwise take the ambient identity. `user.useConfigOnly` makes the
+    invented identity impossible in this repo rather than merely unnecessary.
+    Local config never travels, so this protects the working copy and not the
+    published repo. See DESIGN.md, "The target keeps a copy".
+    """
+    run_git(["config", "user.name", name], cwd=path)
+    run_git(["config", "user.email", email], cwd=path)
+    run_git(["config", "user.useConfigOnly", "true"], cwd=path)
+
+
+def set_signing(path, signing):
+    """Pin the signing key into a repo's own config, or turn signing off there.
+
+    The other half of `set_identity`, and it reaches the build no more than
+    that one does: `commit_empty` passes the key per commit. This is for the
+    commits made by hand afterwards, which would otherwise take the key from
+    the wider config, meaning the development one beside a public address.
+
+    `None` is an unsigned build, and it writes `commit.gpgsign = false`. There
+    is no `user.useConfigOnly` for signing, nothing that makes an inherited key
+    impossible, so the switch that reaches the same result is the instruction
+    not to sign. A key is written with `commit.gpgsign = true` beside it, so a
+    hand-made commit is not the one bare commit in a verified log.
+
+    See DESIGN.md, "The target keeps a copy".
+    """
+    if signing is None:
+        run_git(["config", "commit.gpgsign", "false"], cwd=path)
+        return
+
+    key, fmt = signing
+    run_git(["config", "user.signingkey", key], cwd=path)
+    run_git(["config", "gpg.format", fmt], cwd=path)
+    run_git(["config", "commit.gpgsign", "true"], cwd=path)
+
+
+def commit_empty(path, message, stamp, identity, signing=None):
     """Record a commit carrying no tree at all, at a fixed date.
 
     Both dates take `stamp`. Setting only the author date would leave the
     committer date at "now", so the log would show one uniform time beside
     one real one.
 
-    `identity` is a name and email pair, or None to let git use whatever is
-    configured where prg runs. The environment is added to rather than
-    replaced, since git still needs PATH and HOME.
+    `identity` is a name and email pair, always. Preflight resolved it before
+    the build started, so nothing is left for git to work out here. The
+    environment is added to rather than replaced, since git still needs PATH
+    and HOME.
 
     Hooks are off permanently. These commits are manufactured, and prg closes
     stdin, so a hook that stops to ask has no terminal to ask on.
 
-    `--no-gpg-sign` overrides `commit.gpgsign`, so a machine configured to sign
-    has that switched off here. It is a suppression waiting to be lifted rather
-    than a decision to keep. See DESIGN.md, "Signing is opt-in".
+    `signing` is a key and format pair, or None for an unsigned commit. The
+    values are handed to git on the command line rather than left to the
+    target's own config, which holds neither: like the identity, they were
+    resolved once before the build and are passed through.
+
+    `-S` rather than a reliance on `commit.gpgsign`, since a key resolved for
+    this build is the whole of the instruction to sign. Without a key,
+    `--no-gpg-sign` stays, which is every build prg made before.
     """
+    name, email = identity
     env = dict(os.environ)
     env["GIT_AUTHOR_DATE"] = stamp.isoformat()
     env["GIT_COMMITTER_DATE"] = stamp.isoformat()
-    if identity is not None:
-        name, email = identity
-        env["GIT_AUTHOR_NAME"] = name
-        env["GIT_AUTHOR_EMAIL"] = email
-        env["GIT_COMMITTER_NAME"] = name
-        env["GIT_COMMITTER_EMAIL"] = email
+    env["GIT_AUTHOR_NAME"] = name
+    env["GIT_AUTHOR_EMAIL"] = email
+    env["GIT_COMMITTER_NAME"] = name
+    env["GIT_COMMITTER_EMAIL"] = email
+
+    config = []
+    sign = "--no-gpg-sign"
+    if signing is not None:
+        key, fmt = signing
+        config = ["-c", f"user.signingkey={key}", "-c", f"gpg.format={fmt}"]
+        sign = "-S"
 
     run_git(
         # --allow-empty is what makes a commit with no tree possible, and it
         # leaves with the trees. An empty tree is an error once there is one.
-        ["commit", "--allow-empty", "--no-verify", "--no-gpg-sign", "-m", message],
+        config + ["commit", "--allow-empty", "--no-verify", sign, "-m", message],
         cwd=path,
         env=env,
     )

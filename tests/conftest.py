@@ -33,6 +33,15 @@ GIT_ISOLATION = {
     "GIT_TERMINAL_PROMPT": "0",
 }
 
+# What prg's own preflight finds. Deliberately not `GIT_IDENTITY`: the source
+# repo's commits and the identity prg would stamp have to stay tellable apart.
+AMBIENT_IDENTITY = {
+    "GIT_AUTHOR_NAME": "Suite Ambient",
+    "GIT_AUTHOR_EMAIL": "ambient@example.com",
+    "GIT_COMMITTER_NAME": "Suite Ambient",
+    "GIT_COMMITTER_EMAIL": "ambient@example.com",
+}
+
 
 @pytest.fixture(autouse=True)
 def isolated_git_config(monkeypatch):
@@ -44,6 +53,21 @@ def isolated_git_config(monkeypatch):
     terminal, so the suite passes on a build server and hangs on a desk.
     """
     for name, value in GIT_ISOLATION.items():
+        monkeypatch.setenv(name, value)
+
+
+@pytest.fixture(autouse=True)
+def ambient_identity(monkeypatch):
+    """Give prg an identity to resolve, since the config it would read is gone.
+
+    `isolated_git_config` points git at /dev/null, which leaves nothing for
+    preflight to find, and preflight refuses rather than letting git invent
+    one. So the suite plants an identity in the environment, which is the
+    other half of what git's own resolution accepts.
+
+    A test that wants the refusal deletes these again.
+    """
+    for name, value in AMBIENT_IDENTITY.items():
         monkeypatch.setenv(name, value)
 
 
@@ -105,6 +129,23 @@ def git(path, *args, date=None):
         check=True,
     )
     return result.stdout.strip()
+
+
+def table(lines):
+    """Return the release lines out of a printed report.
+
+    A report is three blocks: the values a build would use, the releases, and
+    the count. So the releases are what sits between the first blank line and
+    the last one, whatever either side grows later.
+
+    Asserts it found some. A caller looping over an empty table would pass
+    without testing anything.
+    """
+    first = lines.index("")
+    last = len(lines) - 1 - lines[::-1].index("")
+    releases = lines[first + 1 : last]
+    assert releases
+    return releases
 
 
 def commit_file(path, name, message, date):

@@ -7,9 +7,28 @@ test modules.
 from datetime import datetime
 
 import pytest
-from conftest import commit_file, init_repo
+from conftest import commit_file, git, init_repo
 
 from prg import gitio
+
+
+def test_ambient_signing_is_none_without_a_key(repo):
+    """The suite's config is empty, which is a machine that does not sign."""
+    assert gitio.ambient_signing(repo) is None
+
+
+def test_ambient_signing_reads_the_key_and_the_format(repo):
+    git(repo, "config", "user.signingkey", "/keys/id_ed25519.pub")
+    git(repo, "config", "gpg.format", "ssh")
+
+    assert gitio.ambient_signing(repo) == ("/keys/id_ed25519.pub", "ssh")
+
+
+def test_ambient_signing_falls_back_to_openpgp(repo):
+    """A key with no format beside it takes git's own default."""
+    git(repo, "config", "user.signingkey", "E68923AA0F79A38E")
+
+    assert gitio.ambient_signing(repo) == ("E68923AA0F79A38E", "openpgp")
 
 
 def test_is_repo_recognizes_a_repo(repo):

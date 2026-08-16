@@ -98,7 +98,8 @@ it, so the comparisons work.
 2. Check each tag out into a scratch tree
 3. With `--weed-out`, run the sanitizer over that tree, keeping only what
    `.weed-out-ignore` names
-4. Commit the result, using the tag's own date at a uniform time
+4. Commit the result, using the tag's own date at a uniform time, signed with
+   the key configured where `prg` runs
 5. Recreate the tags on the new commits
 
 Nothing from the private object store is ever copied. The public repo is built
@@ -122,8 +123,13 @@ pipx install "git+https://github.com/east-van-ai/public-repo-generator.git"
 dependency conflicts to worry about. Worth having around if you use more than
 one Python CLI tool.
 
-Sanitizing is opt-in, so nothing else is required to build a repo. To use it,
-put [weed-out](https://github.com/east-van-ai/weed-out) on your `PATH`, keep a
+You also need `git` on your `PATH` and a git identity configured. Git invents one
+from your account name and your machine's hostname when it finds none, and a
+repo built for showcasing is the last place that belongs, so `prg` refuses
+instead. `prg inspect` reports what it found without building anything.
+
+Sanitizing is opt-in, and it is the only other thing. To use it, put
+[weed-out](https://github.com/east-van-ai/weed-out) on your `PATH`, keep a
 `.weed-out-ignore` file in the source repo listing what should ship, and pass
 `--weed-out`.
 
@@ -163,6 +169,15 @@ prg generate ./private-repo ./public-repo \
     --commit
 ```
 
+Publish a stretch of releases and nothing outside it:
+
+```bash
+prg generate ./private-repo ./public-repo \
+    --start v0.2.0 \
+    --end v0.4.0 \
+    --commit
+```
+
 Then push it yourself. `prg` never touches a remote.
 
 ## CLI Reference
@@ -186,10 +201,47 @@ never deletes anything it did not create.
 | `--author "Name <email>"` | git config | Identity for author and committer |
 | `--weed-out CMD` | none | Path to the sanitizer. Omitted, nothing is filtered |
 | `--start TAG` | earliest `v*` tag | Begin from this release tag |
+| `--end TAG` | latest `v*` tag | Stop at this release tag |
+| `--no-sign` | off | Build unsigned, whatever the config says |
 | `--dry-run` | on | Report the plan, write nothing |
 | `--commit` | off | Actually build the repo |
 
-Dry run is the default. `--commit` is what makes `prg` write.
+Dry run is the default. `--commit` is what makes `prg` write. Both check the
+ingredients first and print what a build would use, so a dry run that comes back
+clean is the build's own gate rather than a guess at it.
+
+`--start` and `--end` name release tags, and both are inclusive. Either can
+stand alone. `--start` leaves the early releases out, which is how a public repo
+begins at the version worth showing. `--end` leaves the late ones out, which is
+how a release that is tagged but not yet announced stays private. A tag outside
+the release set is an error, and so is an `--end` earlier than the `--start`
+beside it.
+
+`--author` falls back to the identity configured where `prg` runs. There has to
+be one. `prg` refuses to build rather than let git invent a name and address
+from your machine.
+
+Commits are signed with the key configured in that same place, and unsigned when
+there is none. `prg` reads `user.signingkey` and `gpg.format` and hands them to
+git, so nothing new has to be set up: if your ordinary commits are signed, the
+generated ones are too, in whichever format you already use. The report names the
+key it found. That line earns its place once you keep more than one account,
+because a host only shows a commit as verified when the key and the address
+belong to the same one. `prg` refuses to build when they disagree, since what it
+would produce looks finished and is not. `--no-sign` builds unsigned whatever the
+config says, and is the way past a mismatch you actually want.
+
+The target gets a copy of both halves in its own `.git/config`: the identity, the
+key, and the format. None of it changes the build, which passes all three
+directly. It is there for the day you amend the public repo by hand, so that
+commit takes the public identity and the public key rather than the development
+ones sitting in your global config. An unsigned build turns signing off there
+instead. Local config never travels, so this reaches your working copy of the
+target and nothing that gets pushed.
+
+A key with a passphrase asks for it during the build, the same way any signed
+commit does. A build with no terminal to ask on, under cron or an editor task,
+wants the key unlocked first.
 
 ### Flags for `inspect`
 
@@ -198,10 +250,12 @@ Dry run is the default. `--commit` is what makes `prg` write.
 | `--tz {local,gmt}` | `local` | Timezone for the uniform timestamp |
 | `--time HH:MM:SS` | `12:00:00` | Fixed time applied to every commit |
 | `--start TAG` | earliest `v*` tag | Begin from this release tag |
+| `--end TAG` | latest `v*` tag | Stop at this release tag |
 
 `inspect` prints the timestamp each release would carry and lists the releases
 that would cross over, so it takes the flags that shape both. It reads `SOURCE`
-and stops there.
+and stops there. Newest release first, the way `git log` reads, since that is
+the log it is previewing.
 
 Flags come after the command and its paths. Their order among themselves is
 free, but the paths are read from their positions, so
@@ -217,9 +271,15 @@ as `prg generate`.
     and `prg inspect` both print their documentation and exit 0
 - `1`: any error `prg` raises itself (a half-typed command, a path too many,
     `SOURCE` is not a git repo, `TARGET` already exists, no `v*` tags found on
-    main/master, or a sanitizer named by `--weed-out` is missing or fails)
+    main/master, no git identity configured, a signing key that disagrees with
+    the author, or a sanitizer named by `--weed-out` is missing or fails)
 - `2`: argparse's own errors (an unknown flag, an unknown command, or
     `--dry-run` and `--commit` together)
+
+Exit 1 covers two different failures. A usage error, where what you typed is the
+problem, prints the message and the usage line. A readiness failure, where the
+command was right and something it needed was missing, prints the full report
+instead, because a usage line would answer a question you did not ask.
 
 Note where the line falls. `prg generate` asks what `generate` does and exits
 0. `prg generate ./private-repo` names one path and forgets the other, which

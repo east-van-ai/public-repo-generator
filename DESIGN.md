@@ -159,16 +159,31 @@ middle in sanitized form, which defeats the purpose.
 The pattern is not configurable. `v*` is already the release convention, so a
 flag would only add a way to get it wrong.
 
-## Where `--start` cuts
+## Where the range cuts
+
+`--start` and `--end` are inclusive, and either can stand alone. Both name a
+release tag rather than a date, since the tags are what cross over.
 
 Releases earlier than the start tag do not appear at all. The start tag's
 commit becomes the public root, carrying no parent and no summary of what came
 before it.
 
 There is nothing honest to put there. A squashed "everything up to v0.3.0"
-commit would claim a history the public repo is not holding. A `--start` naming
-a tag outside the release set is an error rather than a silent fallback to the
-earliest one.
+commit would claim a history the public repo is not holding.
+
+`--end` points the same instrument the other way. Releases after the end tag do
+not appear, and the end tag becomes the tip of `main`. `--start` hides history;
+`--end` holds work back, so a release that is cut but not yet announced stays
+private without having to build before tagging it.
+
+A bound naming a tag outside the release set is an error rather than a silent
+fallback to the earliest or the latest. So is an `--end` earlier than the
+`--start` beside it, and that message names both bounds: either one alone looks
+fine, and the pair is what went wrong.
+
+The cut happens before any timestamp is worked out. Releases that do not cross
+over are not in the public repo, so they take no part in deciding which dates
+collide there.
 
 ## Which keep list applies
 
@@ -284,6 +299,47 @@ Defaults to the git identity configured where `prg` runs, overridable with
 `--author "Name <email>"`. The identity used for public releases is not always
 the one used for development. Author and committer both take the value.
 
+Configured means configured. Git invents an identity when it finds none, built
+from the account name and the machine's hostname, and it commits with that
+rather than stopping. So a repo whose whole purpose is being public ends up
+publishing `you@your-laptop.local`, at an address no hosting account can verify.
+No identity is therefore a refusal, not a fallback.
+
+The probe is `git -c user.useConfigOnly=true var GIT_AUTHOR_IDENT`. It refuses
+when nothing is configured, and it is satisfied by either git config or the
+`GIT_AUTHOR_NAME` and `GIT_AUTHOR_EMAIL` variables. Asking git the question
+directly beats reimplementing its resolution order.
+
+The identity is resolved once, before the build, and passed to every commit
+explicitly. Nothing is left for git to resolve inside the target, so what the
+report printed is what the commits carry.
+
+### The target keeps a copy
+
+The resolved name and email are written into the target's own config right after
+`git init`, along with `user.useConfigOnly = true`. The signing key and its
+format go in beside them, with `commit.gpgsign` set to match the build.
+
+None of it touches the build. The identity arrives through the environment, and
+`GIT_AUTHOR_NAME` outranks `user.name`. The key is passed per commit. Both sit
+there outranked while `prg` works.
+
+It is for afterwards. The target is not a write-once artifact. It gets pushed
+from, and one day it gets amended in by hand. That commit would take the global
+identity and the global key, which are the development ones. That is the same
+mismatched pair `preflight` refuses to build, arriving by the back door. Local
+config pins the public pair to the directory instead.
+
+The two halves need different mechanisms. `user.useConfigOnly` makes the
+invented identity impossible rather than merely unnecessary. Signing has no such
+switch, since nothing stops git inheriting `user.signingkey` from a wider scope.
+So an unsigned build writes `commit.gpgsign = false`, which reaches the same
+result by instruction rather than by refusal. A signed build writes `true`, so a
+hand-made commit later is not the one bare commit in a verified log.
+
+`.git/config` is local and never travels. No clone and no push carries it. This
+protects the working copy of the target, not the published repo.
+
 ## Hooks stay out
 
 Generated commits run with `--no-verify`, permanently. A personal `commit-msg`
@@ -292,7 +348,7 @@ no terminal to ask on. It would hang or fail once per release. These commits are
 manufactured rather than authored, and there is nothing in them for a hook to
 check.
 
-## Signing is opt-in
+## Signing follows the key where prg runs
 
 A showcase repo whose every commit reads "Unverified" undercuts the thing it is
 showing. Signing fixes that, and the manufactured dates do not stand in the way.
@@ -307,45 +363,74 @@ The signature also carries its own creation time, which is the real moment of
 signing. Key validity is judged against that clock rather than the commit's, so
 a key made this year signs a commit dated last year without complaint.
 
-### Stop suppressing, rather than add
+### No flag turns it on
 
-`--no-gpg-sign` overrides `commit.gpgsign`, so `prg` has been turning signing
-off on machines already configured to do it. What the tool needs is to stop
-suppressing, not to grow a signing feature.
+A signing key configured where `prg` runs is the whole instruction. There is no
+`--sign`, because the answer is already on disk and a flag would only repeat it.
 
-`prg` holds no key material either way. `user.signingkey`, `gpg.format`, and the
-agent are git's own configuration, read where `prg` runs. `prg` asks for a
-signature and stops there. So the line below about never needing credentials
+The key belongs to the identity being published under rather than to the
+machine. Two accounts mean two keys, often in two formats, and the way to choose
+between them is to stand in a directory configured for one of them. That is the
+same question `--author` answers, so both are resolved from the same place.
+
+The format travels with the key, because it decides what the key is: a path to a
+public key file for SSH, a key ID for OpenPGP. A key found with no format beside
+it takes openpgp, which is git's own default rather than a choice made here.
+
+`prg` holds no key material. Those two values name a key, and git and its agent
+do everything after that. So the line below about never needing credentials
 still holds, and the git version floor is untouched, since whether the format is
 OpenPGP or SSH is the configuration's business.
 
-Whether the switch is an explicit opt-in or simply the absence of the override
-is not settled. It sits in the open questions at the end.
+### Resolved once, then passed
 
-Two things follow whichever way it lands. Stdin is closed, so a passphrase
-prompt has nowhere to go, and the agent has to be unlocked before a build rather
-than during one. And whatever `--author` sets has to match both the signing key
-and a verified address on the hosting account, or the commit comes out signed
-and still unverified.
+The target's own config is empty at the moment it matters. `prg` creates that
+repo, so there is nothing in it to read. The values are resolved beforehand, in
+`prg`'s own working directory, and handed to each commit on the command line.
+Same as the identity, and for the same reason: one resolution is what stops the
+report and the commits disagreeing.
+
+`-S` on every commit rather than a reliance on `commit.gpgsign`. A key resolved
+for this build is already the instruction to sign. With no key, `--no-gpg-sign`
+stays and the build is unsigned.
+
+The report prints the key above the release table, directly under the author,
+because the two are halves of one decision and reading them together is the
+point.
+
+### The key and the address have to agree
+
+A host verifies a commit by asking whether the committer's address is verified
+on the account holding the key. Both halves have to name the same account, so
+`preflight` refuses when they do not.
+
+The case this catches is `--author` naming one account while the ambient key
+belongs to another. It produces a repo that is signed, Unverified, and carrying
+a development key in public, which links two accounts that were kept apart on
+purpose. Nothing about it looks wrong until the push.
+
+Addresses are compared and names ignored, since the address is what a host
+judges. For OpenPGP the key's own UIDs can be asked for as well, which catches a
+config naming `user.email` in one scope while inheriting `user.signingkey` from
+another. SSH keys carry no address, so that format gets the comparison alone and
+rests on the config having been written as a pair. The asymmetry is real and
+worth stating rather than smoothing over.
+
+`--no-sign` is the way through for a build that genuinely wants the mismatch.
 
 ### What the badge test showed
 
-A repo built by `prg` and pushed carried no badge at all. Not "Unverified", and
-the difference is the whole finding. A host renders a badge only when there is a
-signature to judge, so an empty result means the commit object carries none.
-"Unverified" would have meant a signature was present and could not be tied to
-the account, which is a different problem with different causes.
+Both halves verify. Fourteen commits pushed under an SSH key, and fourteen more
+under an OpenPGP one, all came back `verified: true` with reason `valid`, on
+dates spanning seven months. Manufactured dates really do not disturb
+verification, which until then was an argument rather than a measurement.
 
-The machine that ran the test was already configured to sign: SSH format, a
-signing key, and `commit.gpgsign` set true. Every ordinary commit it makes is
-signed. `prg` was the one thing switching that off.
-
-So the suppression is confirmed as the cause on a real machine, rather than
-argued from the armchair. What the test did not reach is whether the host
-accepts a signature once one exists. That turns on the key being registered for
-signing rather than only for authentication, and on the commit's address being
-verified on the account. Those two decide Verified against Unverified, and both
-are still untested.
+An earlier build, made while `prg` still suppressed signing, carried no badge at
+all. Not "Unverified", and the difference is worth keeping. A host renders a
+badge only when there is a signature to judge, so an empty result means the
+commit object carries none. "Unverified" would have meant a signature was
+present and could not be tied to the account, which is a different problem with
+different causes.
 
 A trap sits next to all of this. Signing and verifying are configured
 separately, and SSH verification additionally wants `gpg.ssh.allowedSignersFile`
@@ -362,11 +447,78 @@ time, so the same source and the same flags produce a different chain of hashes
 on every run. Comparing two builds stops being a way to show that nothing
 changed.
 
+A locked key still asks, and the asking works. `prg` closes stdin, but the
+prompt does not arrive through it: the agent runs pinentry itself and opens the
+terminal it was told to use, so a passphrase typed during a build is accepted.
+Take the terminal away, as cron or an editor task does, and pinentry has nothing
+to open. An unattended build wants the key unlocked in advance.
+
+`--no-sign` is the way out of both, and it is the only flag signing has. It
+turns a signed build back into a comparable one, and it is the answer a refused
+pair points at. A machine set up to sign otherwise signs every build made from
+it, which is not always what is wanted.
+
 ## `prg` never touches a remote
 
 It builds a local directory and stops. Pushing is a separate, human step.
 
 Keeping remote access out of the tool means it never needs credentials.
+
+## Ingredients before the build
+
+Every check `prg` can make happens before any of the work. Git on `PATH`. The
+source being a repo with releases in it. `--start` and `--end` naming ones that
+are there. `--author` parsing. An identity to build under. A signing key that
+names the same account as that identity. A target that does not exist. A
+sanitizer that does, when `--weed-out` names one.
+
+The stage returns two things: the failures, and the values a build would use.
+Validation alone answers whether the build can run. For a repo that is generated
+rather than derived, where every field in a public commit is a decision rather
+than a preservation, the more useful answer is what it will stamp. A report
+showing the timestamps and hiding the author shows half the decision.
+
+The signing key is resolved here too. Finding none is not a failure, since an
+unsigned build is still a build. A key that disagrees with the author is,
+because what it produces looks finished and is not.
+
+Some ingredients are fatal and the rest are reported. Without git, with a source
+holding no releases, or with a range naming none, there is no report to produce
+and nothing to say about it. The fatal ones raise where the fact is learned,
+which for the range means while the tags are being read, not in `preflight`. A
+missing identity is different. The table can still be printed, and printing it
+is how the gap gets found.
+
+### The verdict is not the report
+
+| Command | Prints | Exit |
+| --- | --- | --- |
+| `inspect` | the values and the table | 0 |
+| dry run | the values, the failures, and the table | 1 |
+| `--commit` | the same, and that nothing was written | 1 |
+
+`inspect` answers which releases cross over and at what time. That answer holds
+whether or not an identity is configured, so a missing one is reported and the
+command passes. It is the cheapest way to find the gap in the first place.
+
+The dry run reports the same gap and fails on it, because meeting the failures
+before `--commit` meets them is the reason it exists. It prints everything first.
+A dry run that stopped at the first missing ingredient would drip-feed them, one
+run per fix, while already knowing all of them.
+
+`--commit` fails the same way and adds that nothing was written. There is no
+second code path. The dry run is the build's own gate rather than a description
+of one.
+
+### Readiness failures print no usage line
+
+An error normally prints `prg: message`, then the usage line, then exits 1. That
+is right when what was typed is the problem. A readiness failure is not that. The
+command line was correct and something it needed was missing, so a usage line
+answers a question nobody asked.
+
+The exit code does not move. Exit 1 is prg's own error and it covers both without
+stretching. What differs is what gets printed beside it.
 
 ## Dry run by default
 
@@ -375,17 +527,15 @@ Keeping remote access out of the tool means it never needs credentials.
 
 ### What a dry run prints
 
-Whether a sanitizer is in play, then the plan the build would follow. One line
-per release: the tag name and the uniform timestamp it would receive. Then a
-count.
+The values the build would use, then the plan it would follow. One line per
+release: the tag name and the uniform timestamp it would receive. Then a count.
 
 It is the same table `inspect` prints. Both read the same plan, so a preview
 cannot drift away from the build it is previewing.
 
-Nothing is extracted, so a dry run says nothing about which files would ship. It
-does check what is cheap to check: the source is a repo, the target does not
-exist, `--author` parses, and a named sanitizer is on `PATH`. Those are the
-failures worth meeting before `--commit` rather than during.
+Nothing is extracted, so a dry run says nothing about which files would ship.
+What it does check is the ingredient list above, and that is where the failures
+worth meeting before `--commit` get met.
 
 A real build prints the plan, then lays it down. So the dry run is the build's
 own plan, not a second description of it written alongside.
@@ -444,8 +594,13 @@ one: an unknown command, an unknown flag, a bad value.
 
 ## What `inspect` prints
 
-The tags that would become commits, oldest first. Two columns: the name, and
-the uniform timestamp it would receive.
+The values a build would use, then the tags that would become commits, newest
+first. Two columns: the name, and the uniform timestamp it would receive.
+
+Newest first because the table previews a log, and `git log` reads that way. A
+preview running the other way asks the reader to flip it in their head. The
+build still lays the commits down oldest first, since that is what the parent
+chain needs, so the reversal is presentation and nothing more.
 
 No message column. The public commit message is the tag name, so a third column
 would print the first one again.
@@ -455,8 +610,9 @@ carries `--tz` and `--time`, with the same defaults `generate` uses. The stamp
 is the part of a preview most worth having, since it is what the public log will
 actually read.
 
-`--start` comes along for the same reason. It decides which releases cross over,
-and a preview listing releases the build will skip is previewing something else.
+`--start` and `--end` come along for the same reason. They decide which releases
+cross over, and a preview listing releases the build will skip is previewing
+something else.
 
 One stamp per line, not two. The commit's real date is a click away in the
 source repo, and a preview of the public timeline is not the place to show the
@@ -472,12 +628,6 @@ Refuse and stop. `prg` does not delete anything it did not create.
 
 ## Open questions
 
-- **The shape of the signing switch.** Whether `prg` simply stops overriding
-  `commit.gpgsign` and honours the configuration it finds, or whether signing
-  becomes an explicit `--sign` opt-in. Honouring the config adds no surface and
-  matches the tool getting out of the way. An explicit flag keeps a generated
-  showcase from inheriting a habit set for ordinary work. Either way an escape
-  hatch is wanted in the opposite direction.
 - **Retroactive exclusion.** A `--weed-out-keep` flag, and whether it layers on
   top of the tag's own `.weed-out-ignore` or replaces it. Blocked on `weed-out`
   supporting a `--keep`-only mode.
