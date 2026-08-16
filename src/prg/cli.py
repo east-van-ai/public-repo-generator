@@ -37,7 +37,8 @@
 # Exit codes:
 #
 #    0:     success, and documentation
-#    1:     prg's own error, a path missing or one too many included
+#    1:     prg's own error, a path missing or one too many included, or an
+#           ingredient a build needs that is not there
 #    2:     an unknown command, an unknown flag, or a bad value
 #
 # License: MIT
@@ -113,7 +114,13 @@ def leading_paths(tokens):
 
 
 def usage_error(command, message):
-    """Report one of prg's own errors, with the offending command's usage."""
+    """Report a command line prg could not read, with that command's usage.
+
+    The usage line belongs here and nowhere else. A readiness failure exits 1
+    too, and printing the usage beside it would answer a question nobody
+    asked: the command line was right, and something it needed was missing.
+    See DESIGN.md, "Readiness failures print no usage line".
+    """
     print(f"prg: {message}", file=sys.stderr)
     print(f"Usage: {command.module.USAGE}", file=sys.stderr)
     return EXIT_ERROR
@@ -122,9 +129,10 @@ def usage_error(command, message):
 def add_plan_flags(parser):
     """Add the flags deciding which releases cross over and what stamp they get.
 
-    `generate` and `inspect` share all three, and they have to. A preview
-    whose stamps came from different defaults would be previewing a build
-    nobody is going to run.
+    `generate` and `inspect` share all four, and they have to. A preview whose
+    stamps came from different defaults would be previewing a build nobody is
+    going to run, and one listing releases the build will skip would be
+    previewing something else again.
     """
     parser.add_argument(
         "--tz",
@@ -146,6 +154,11 @@ def add_plan_flags(parser):
         "--start",
         metavar="TAG",
         help=f"Begin from this release tag (default: earliest {RELEASE_TAG_PATTERN})",
+    )
+    parser.add_argument(
+        "--end",
+        metavar="TAG",
+        help=f"Stop at this release tag (default: latest {RELEASE_TAG_PATTERN})",
     )
 
 
@@ -184,6 +197,11 @@ def build_parser():
         default=DEFAULT_WEED_OUT,
         metavar="CMD",
         help="Path to the weed-out sanitizer (default: none, nothing is filtered)",
+    )
+    generate.add_argument(
+        "--no-sign",
+        action="store_true",
+        help="Build unsigned, whatever the git config says",
     )
     mode = generate.add_mutually_exclusive_group()
     mode.add_argument(
@@ -257,6 +275,10 @@ def main(argv=None):
         else:
             cli_inspect.run(paths[0], args)
     except PRGError as failure:
+        # A readiness failure is the verdict on a report already printed, so
+        # stdout goes out first. Redirected, it block-buffers while stderr does
+        # not, and the verdict would otherwise arrive ahead of what it judges.
+        sys.stdout.flush()
         print(f"prg: {failure}", file=sys.stderr)
         return EXIT_ERROR
 

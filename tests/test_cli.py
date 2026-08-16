@@ -142,6 +142,7 @@ def test_generate_defaults_match_the_documented_ones():
     assert generator.DEFAULT_TIME == "12:00:00"
     assert args.author is None
     assert args.start is None
+    assert args.end is None
 
 
 def test_no_sanitizer_runs_unless_asked_for():
@@ -155,10 +156,11 @@ def test_inspect_shares_generates_plan_defaults():
     """A preview built on other defaults would preview another build."""
     inspect = cli.build_parser().parse_args(["inspect", "source"])
     generate = cli.build_parser().parse_args(["generate", "source", "target"])
-    assert (inspect.tz, inspect.time, inspect.start) == (
+    assert (inspect.tz, inspect.time, inspect.start, inspect.end) == (
         generate.tz,
         generate.time,
         generate.start,
+        generate.end,
     )
 
 
