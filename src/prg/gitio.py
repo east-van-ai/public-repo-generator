@@ -12,6 +12,9 @@ not a second concern.
 Read and write both. No reflog expiry and no `gc`: a repo built commit by
 commit out of nothing holds nothing unreachable, and its reflog already carries
 the manufactured dates. See DESIGN.md, "Clean room, not history rewriting".
+
+`extract` is the one call that does not go through `run_git`. It carries a tar
+stream rather than text, and it hands that stream to `tar`.
 """
 
 import os
@@ -55,6 +58,34 @@ def run_git(args, cwd, env=None):
         raise GitError(f"git {' '.join(args)}: {detail}")
 
     return result.stdout.strip()
+
+
+def run_binary(args, cwd, payload=None):
+    """Run `args` in `cwd` and return its stdout as bytes.
+
+    The bytes twin of `run_git`, for the one call carrying an archive rather
+    than text. It raises GitError the same way, so a caller meets one kind of
+    failure whichever half of a pipe broke.
+
+    `payload` is written to stdin. Without one, stdin is closed, for the same
+    reason `run_git` closes it.
+    """
+    stream = (
+        {"input": payload} if payload is not None else {"stdin": subprocess.DEVNULL}
+    )
+    try:
+        result = subprocess.run(
+            args, cwd=cwd, capture_output=True, check=False, **stream
+        )
+    except (FileNotFoundError, NotADirectoryError) as exc:
+        raise GitError(f"could not run {args[0]} in {cwd}: {exc}") from exc
+
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", "replace").strip()
+        detail = stderr or f"exit status {result.returncode}"
+        raise GitError(f"{' '.join(args)}: {detail}")
+
+    return result.stdout
 
 
 def git_available():
@@ -261,7 +292,7 @@ def set_signing(path, signing):
     """Pin the signing key into a repo's own config, or turn signing off there.
 
     The other half of `set_identity`, and it reaches the build no more than
-    that one does: `commit_empty` passes the key per commit. This is for the
+    that one does: `commit` passes the key per commit. This is for the
     commits made by hand afterwards, which would otherwise take the key from
     the wider config, meaning the development one beside a public address.
 
@@ -283,8 +314,45 @@ def set_signing(path, signing):
     run_git(["config", "commit.gpgsign", "true"], cwd=path)
 
 
-def commit_empty(path, message, stamp, identity, signing=None):
-    """Record a commit carrying no tree at all, at a fixed date.
+def extract(source, tag, into):
+    """Write `tag`'s tree from `source` into the directory `into`.
+
+    `git archive` reads the tag and writes a tar stream. The source repo is
+    never checked out, so nothing is written there, no worktree registration
+    has to be unwound, and a build that stops halfway leaves the source as it
+    found it.
+
+    `tar` unpacks the stream rather than Python's `tarfile`. Unpacking is the
+    kind of work this module already shells out for, and the system unpacker
+    lays down the modes and the symlinks git recorded without prg owning any
+    extraction semantics of its own across five Python versions. The cost is a
+    second binary that has to be there, which on the machines prg runs on it
+    already is.
+
+    The stream is held in memory between the two commands. A release tree is
+    source code, and buffering keeps git's own stderr readable when the archive
+    step is the half that failed.
+    """
+    archive = run_binary(["git", "archive", "--format=tar", tag], cwd=source)
+    run_binary(["tar", "-x", "-f", "-"], cwd=into, payload=archive)
+
+
+def stage_all(path):
+    """Stage the whole working tree, including what a `.gitignore` names.
+
+    `--force` because the tag's tree is the whole instruction. Git lets a file
+    stay tracked once it is tracked, so a release can ship a file that a
+    `.gitignore` in its own tree also matches. Without `--force` that file
+    would drop out of the public commit without a word.
+
+    `--all` covers deletions too, which is what records a file the previous
+    release shipped and this one dropped.
+    """
+    run_git(["add", "--all", "--force"], cwd=path)
+
+
+def commit(path, message, stamp, identity, signing=None):
+    """Record what is staged as a commit, at a fixed date.
 
     Both dates take `stamp`. Setting only the author date would leave the
     committer date at "now", so the log would show one uniform time beside
@@ -324,8 +392,9 @@ def commit_empty(path, message, stamp, identity, signing=None):
         sign = "-S"
 
     run_git(
-        # --allow-empty is what makes a commit with no tree possible, and it
-        # leaves with the trees. An empty tree is an error once there is one.
+        # --allow-empty covers two tags sitting on one commit, and two
+        # releases whose trees happen to match. A release that crossed over
+        # belongs in the public log either way.
         config + ["commit", "--allow-empty", "--no-verify", sign, "-m", message],
         cwd=path,
         env=env,

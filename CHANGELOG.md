@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-22
+
+### Added
+
+- `generate` extracts each release tag's tree and commits it, so a public repo
+  built by `prg` holds files. Each commit records the whole tree, so a file
+  dropped between two releases reads as a deletion in the public log.
+- `prg --version` prints the installed version and exits 0. It is documentation,
+  the same as a bare command word, and it belongs to the tool rather than to a
+  command.
+
 ## [0.3.0] - 2026-08-16
 
 ### Added

@@ -189,6 +189,42 @@ def repo(tmp_path):
 
 
 @pytest.fixture
+def churn_repo(tmp_path):
+    """A repo whose two releases differ in more than one way.
+
+    `dropped.txt` ships in v0.1.0 and not in v0.2.0, `added.txt` the other way
+    around, and `tool.sh` gains its executable bit between them. `.gitignore`
+    names `tracked.txt`, which is tracked all the same, since git keeps
+    tracking a file a later rule matches. v0.2.1 sits on v0.2.0's own commit,
+    so the two have identical trees.
+
+    The mode is set on the file and in the index both. `chmod` alone misses a
+    filesystem that does not carry the bit, and `update-index` alone leaves the
+    working tree disagreeing with the index, which is a dirty source repo.
+    """
+    path = init_repo(tmp_path / "churn", "main")
+
+    (path / ".gitignore").write_text("tracked.txt\n")
+    (path / "tracked.txt").write_text("tracked all along\n")
+    (path / "dropped.txt").write_text("here for one release\n")
+    (path / "tool.sh").write_text("#!/bin/sh\n")
+    git(path, "add", "--all", "--force")
+    git(path, "commit", "-m", "first", date="2026-01-01T09:00:00+00:00")
+    git(path, "tag", "v0.1.0")
+
+    git(path, "rm", "--quiet", "dropped.txt")
+    (path / "added.txt").write_text("here from the second\n")
+    (path / "tool.sh").chmod(0o755)
+    git(path, "add", "--all")
+    git(path, "update-index", "--chmod=+x", "tool.sh")
+    git(path, "commit", "-m", "second", date="2026-02-01T09:00:00+00:00")
+    git(path, "tag", "v0.2.0")
+    git(path, "tag", "v0.2.1")
+
+    return path
+
+
+@pytest.fixture
 def master_repo(tmp_path):
     """A one-release repo whose branch is `master`.
 
