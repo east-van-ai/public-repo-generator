@@ -1,13 +1,13 @@
 # prg - Public Repo Generator
 
-Build a clean public git repository(repo) from a private one. Only your tagged
-releases cross over, sanitized and stamped with a uniform timestamp.
+Build a clean public git repository from a private one. Only your tagged
+releases cross over, stamped with a uniform timestamp. Sanitizing is opt-in.
 
 ## Why `prg` Exists
 
 Even when the code is clean, publishing the whole git repo means publishing the
 whole process. The late-night refactorings, the abandoned experiments, the
-messy middle. `prg` lets you create a showcase repo which includes only your
+messy middle. `prg` lets you create a showcase repo that includes only your
 tagged releases and their timestamps.
 
 - **Curated timeline**: only `v*` release tags become public commits
@@ -22,7 +22,7 @@ tagged releases and their timestamps.
 
 ## Clean logs
 
-Simply, imagine this ...
+Imagine this.
 
 ```text
 $ git log --oneline --all --graph --format="%h %d %s %an <%ae> %ai"
@@ -70,6 +70,13 @@ changed between v2 and v3, which is the one thing a release history is for.
 
 `prg` builds a real chain instead. Each release lands on top of the one before
 it, so the comparisons work.
+
+That comparison is the thing worth showing. The diff between two releases is
+what a project actually did that cycle, in one view, without a tour. A private
+repo holds the same information and will not offer it, because a checkout opens
+on a file tree and a commit list, and nobody scrolls a log hunting for where one
+release ended and the next began. A repo built by `prg` has nothing else in it.
+The comparison is what a visitor lands on.
 
 ## How It Works
 
@@ -182,6 +189,10 @@ Then push it yourself. `prg` never touches a remote.
 
 ## CLI Reference
 
+`prg` with nothing after it prints its own documentation, and so does a
+command word on its own. `prg --version` prints the installed version.
+All three exit 0.
+
 ### Commands
 
 | Command | Description |
@@ -199,7 +210,7 @@ never deletes anything it did not create.
 | `--tz {local,gmt}` | `local` | Timezone for the uniform timestamp |
 | `--time HH:MM:SS` | `12:00:00` | Fixed time applied to every commit |
 | `--author "Name <email>"` | git config | Identity for author and committer |
-| `--weed-out CMD` | none | Path to the sanitizer. Omitted, nothing is filtered |
+| `--weed-out CMD` | none | Path to the sanitizer. Without it, nothing is filtered |
 | `--start TAG` | earliest `v*` tag | Begin from this release tag |
 | `--end TAG` | latest `v*` tag | Stop at this release tag |
 | `--no-sign` | off | Build unsigned, whatever the config says |
@@ -261,9 +272,6 @@ Flags come after the command and its paths. Their order among themselves is
 free, but the paths are read from their positions, so
 `prg generate --commit ./private-repo ./public-repo` is an error rather than a
 reordering.
-
-Bare `prg` prints its own documentation, and so does a bare command word such
-as `prg generate`.
 
 ### Exit codes
 

@@ -31,7 +31,7 @@ is the reason.
 
 ## Clean logs
 
-Simply, imagine this ...
+Imagine this.
 
 ```text
 $ git log --oneline --all --graph --format="%h %d %s %an <%ae> %ai"
@@ -127,10 +127,10 @@ else. Most keep lists do name it, because they are written for a working repo.
 Leaning on that would make prg's safety a property of a file in somebody else's
 project.
 
-So the directory handed to `weed-out` never holds the target's git data. Each
-tag's tree is extracted on its own, sanitized where it stands, and recorded
-into the target from the outside. Nothing prg is building sits inside the blast
-radius.
+So `prg` supplies it. Every sanitizer run adds `--keep ".git/"` on top of
+whatever the tag's own keep list allows. The protection comes from the caller
+rather than from the file being read, which is what makes it hold for a keep
+list `prg` has never seen.
 
 The source repo is only ever read. Nothing is checked out in place there.
 
@@ -213,6 +213,37 @@ A release whose sanitized tree comes out empty is an error. An empty commit
 says nothing in a showcase repo, and an empty tree nearly always means the keep
 list and the tag's layout have drifted apart.
 
+## How a tree becomes a commit
+
+Each release is extracted with `git archive`, straight into the target's working
+tree. The source repo is read and never checked out, so nothing is written there
+and a failed build leaves nothing behind to clean up.
+
+Before each extraction the target's working tree is emptied, everything except
+`.git`. Then `git add --all` records what landed. A file the previous release
+shipped and this one dropped registers as a deletion, with no bookkeeping of
+prg's own. That is what makes each commit the whole tree rather than a layer
+laid over the release before it.
+
+Staging is forced. Git keeps tracking a file once it is tracked, so a release
+can ship a file that a `.gitignore` in its own tree also matches. Honouring that
+rule would drop the file from the public commit without a word, and the tag's
+tree is the whole instruction.
+
+Emptying a directory is the one destructive thing `prg` does, and it is confined
+to a directory `prg` created. `preflight` refuses a target that already exists,
+so nothing sitting in there arrived any other way.
+
+No scratch directory stands between the source and the target, and the sanitizer
+will not need one either. It runs where the tree stands, with `.git/` added to
+the keep list by `prg` rather than trusted to the tag's own. Care is what keeps
+the repository out of the blast radius, not distance.
+
+`--allow-empty` stays. Two tags on one commit, or two releases whose trees match,
+leave `git commit` nothing to record. A release that crossed over belongs in the
+public log either way, so an identical tree is a fact about the releases rather
+than an error.
+
 ## Timestamps
 
 Each public commit keeps the real calendar date of the commit its release tag
@@ -258,6 +289,18 @@ fire in one case and stay quiet in the other.
 Git records an author date and a committer date. Setting only the author date
 leaves the committer date as "now", so the log ends up showing one uniform time
 next to one real one. Both get the uniform value.
+
+### The contribution graph reads them too
+
+A hosting account plots contributions by author date and attributes them by the
+committer address. `prg` sets both, so the graph fills in wherever the releases
+fall. An account opened this year can show squares in a year before it existed.
+
+That is not a problem to solve. The dates are the real release dates, which is
+what keeps the squares honest. They would stop being honest the moment one was
+chosen for the graph rather than read off a release. The graph is a public
+surface the build writes to, alongside the repo itself, and `--time`, `--tz`,
+`--start`, and `--end` all move it.
 
 ## Commit message
 
@@ -472,6 +515,11 @@ are there. `--author` parsing. An identity to build under. A signing key that
 names the same account as that identity. A target that does not exist. A
 sanitizer that does, when `--weed-out` names one.
 
+Presence on `PATH` is the whole of the git check. No version is asserted,
+because nothing the build runs needs one. The public branch is set with
+`symbolic-ref` rather than `git init --initial-branch`, which arrived later. A
+floor nobody has to meet beats a floor to keep current.
+
 The stage returns two things: the failures, and the values a build would use.
 Validation alone answers whether the build can run. For a repo that is generated
 rather than derived, where every field in a public commit is a decision rather
@@ -562,6 +610,26 @@ the mistake instead of reporting it.
 `isatty` decides nothing. What was typed decides, so the same command line
 answers the same way from a shell, from cron, and from a test.
 
+### `--version` reads the installed metadata
+
+`prg --version` prints one line and exits 0. It is documentation, the same as
+a bare command word, so it shares that code.
+
+The number lives in `pyproject.toml` and reaches the CLI through the installed
+distribution's metadata. No second copy sits in the source. A checkout that has
+never been installed has no metadata to read, and every invocation past a bare
+word builds the parser, so an unguarded lookup would take down every command
+rather than this one flag. The miss is answered instead, `unknown (not
+installed)`, and the parser goes on being built.
+
+The name printed is `prg`, the word that was typed, not
+`public-repo-generator`, the distribution the number was read from. The two
+differ here. The command line is what the reader is holding.
+
+The flag sits on the root parser and nowhere else, so `prg generate --version`
+is an unknown flag, exit 2. Asking what the tool is has one place to be asked,
+and the tool answers it rather than a command.
+
 ## Positions are decided, not inferred
 
 The command word sits at `sys.argv[1]`, `SOURCE` at `argv[2]`, and `TARGET` at
@@ -646,3 +714,16 @@ Refuse and stop. `prg` does not delete anything it did not create.
   unreachable objects. The part that stalls it is checking the output's files
   against the keep list, since a command given only the output repo cannot
   see a keep list unless a release happened to ship one.
+- **What the report says shipped.** The release table answers which releases
+  crossed over and at what stamp, never which files. That is survivable while a
+  tree crosses over whole, and it stops being so once `--weed-out` decides what
+  survives. A file count as a third column would fit the one-page report where a
+  full listing would bury it. The knot is the dry run. Counting a source tag's
+  files extracts nothing and is exact, but filtering happens on a real extracted
+  tree, so a preview can say what a tag holds and not what would survive. Both
+  commands print through one renderer, and a column only one of them can fill
+  honestly is the drift that module exists to prevent.
+- **A `tar` check before the build.** Extracting a release runs `git archive`
+  into `tar`, so `tar` is the second binary the build shells out to and
+  `preflight` does not look for it. A missing one fails at the first release
+  rather than before the build starts, which is the whole point of the stage.

@@ -361,13 +361,38 @@ def author_identity(author):
     return identity
 
 
+def clear_worktree(target):
+    """Empty the target's working tree, everything except `.git`.
+
+    Each public commit records the whole tree rather than a layer over the
+    release before it, so the previous release's files go before the next
+    ones land. `git add --all` then reads a file dropped between two releases
+    as the deletion it is, with no bookkeeping of prg's own.
+
+    Filesystem work rather than git work, which is why it sits here and not in
+    `gitio`.
+
+    This is the one destructive thing prg does, and it is confined to a
+    directory prg created: `preflight` refuses a target that already exists,
+    so nothing sitting in there arrived any other way. A link is unlinked
+    rather than followed, so nothing outside the tree is reachable from here.
+    """
+    for entry in os.scandir(target):
+        if entry.name == ".git":
+            continue
+        if entry.is_dir(follow_symlinks=False):
+            shutil.rmtree(entry.path)
+        else:
+            os.remove(entry.path)
+
+
 def reconstruct(build, commits, identity, signing):
     """Build the target repo from `commits`, oldest first.
 
-    Each commit carries no tree yet, so the round records the shape of the
-    public repo and none of its contents: the parents, the stamps, the tag
-    refs, and the branch. `commits` comes from `plan`, so the build lays down
-    exactly what the dry run described.
+    Each release is laid down whole: the working tree is emptied, the tag's
+    tree is extracted into it, and what landed becomes the commit. `commits`
+    comes from `plan`, so the build lays down exactly what the dry run
+    described.
 
     `identity` and `signing` are what preflight resolved, passed in rather
     than worked out again here. One resolution means the report and the
@@ -379,7 +404,9 @@ def reconstruct(build, commits, identity, signing):
     about this build.
 
     A failure part-way names the release it stopped at, and leaves the target
-    as it stands.
+    as it stands. The `try` wraps the loop rather than its body: every step
+    inside re-raises, so the first failure ends the build either way, and the
+    loop variable is still bound to the release that failed.
     """
     os.makedirs(build.target)
 
@@ -390,11 +417,12 @@ def reconstruct(build, commits, identity, signing):
     except gitio.GitError as failure:
         raise PRGError(str(failure)) from failure
 
-    for commit in commits:
-        try:
-            gitio.commit_empty(
-                build.target, commit.name, commit.stamp, identity, signing
-            )
+    try:
+        for commit in commits:
+            clear_worktree(build.target)
+            gitio.extract(build.source, commit.name, build.target)
+            gitio.stage_all(build.target)
+            gitio.commit(build.target, commit.name, commit.stamp, identity, signing)
             gitio.tag(build.target, commit.name)
-        except gitio.GitError as failure:
-            raise PRGError(f"stopped at {commit.name}: {failure}") from failure
+    except (gitio.GitError, OSError) as failure:
+        raise PRGError(f"stopped at {commit.name}: {failure}") from failure

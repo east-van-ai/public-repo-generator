@@ -32,6 +32,9 @@
 # Paths come first, then flags, whose order among themselves is free. Bare
 # `prg` prints this text and exits 0. Asking is not a usage error.
 #
+# `prg --version` prints the installed version. That is documentation too, so
+# it exits 0. It belongs to the tool, never to a command.
+#
 # prg reads no piped input.
 #
 # Exit codes:
@@ -45,32 +48,12 @@
 # ==============================================
 """
 
-import argparse
 import sys
 from collections import namedtuple
-from datetime import time
 
 from prg import cli_generate, cli_inspect
-from prg.generator import (
-    DEFAULT_TIME,
-    DEFAULT_TZ,
-    DEFAULT_WEED_OUT,
-    RELEASE_TAG_PATTERN,
-    PRGError,
-)
-
-# Exit codes. 0 is success, and documentation too, since asking what a command
-# does is not an error. 1 is prg's own: a path slot short, a path too many, or
-# anything the pipeline raises. 2 is argparse's, for the vocabulary it owns,
-# an unknown command, an unknown flag, a bad value.
-#
-# Only the first two return through `main`. Argparse calls `sys.exit` itself,
-# so 2 arrives as a SystemExit unwinding past `main`, and a test for it catches
-# rather than compares. See DESIGN.md, "Positions are decided, not inferred",
-# for where the 1/2 line falls and why.
-EXIT_OK = 0
-EXIT_ERROR = 1
-EXIT_ARGPARSE = 2  # argparse hardcodes it in `ArgumentParser.error()`
+from prg.args import EXIT_ERROR, EXIT_OK, build_parser
+from prg.generator import PRGError
 
 Command = namedtuple("Command", "module slots")
 """A command word's module, and the path slots it reads.
@@ -83,18 +66,6 @@ COMMANDS = {
     "generate": Command(cli_generate, ("SOURCE", "TARGET")),
     "inspect": Command(cli_inspect, ("SOURCE",)),
 }
-
-
-def clock_time(value):
-    """Parse an HH:MM:SS argument, for argparse's `type=`.
-
-    Raising here puts a bad `--time` in argparse's own vocabulary, exit 2,
-    alongside the bad `--tz` that `choices` already catches.
-    """
-    try:
-        return time.fromisoformat(value)
-    except ValueError:
-        raise argparse.ArgumentTypeError(f"not an HH:MM:SS time: {value!r}") from None
 
 
 def leading_paths(tokens):
@@ -124,106 +95,6 @@ def usage_error(command, message):
     print(f"prg: {message}", file=sys.stderr)
     print(f"Usage: {command.module.USAGE}", file=sys.stderr)
     return EXIT_ERROR
-
-
-def add_plan_flags(parser):
-    """Add the flags deciding which releases cross over and what stamp they get.
-
-    `generate` and `inspect` share all four, and they have to. A preview whose
-    stamps came from different defaults would be previewing a build nobody is
-    going to run, and one listing releases the build will skip would be
-    previewing something else again.
-    """
-    parser.add_argument(
-        "--tz",
-        choices=["local", "gmt"],
-        default=DEFAULT_TZ,
-        help="Timezone for the uniform timestamp (default: %(default)s)",
-    )
-    parser.add_argument(
-        "--time",
-        type=clock_time,
-        # Converted here rather than left as a string, so the default and a
-        # supplied value arrive as the same type without leaning on argparse
-        # putting string defaults through `type` for us.
-        default=clock_time(DEFAULT_TIME),
-        metavar="HH:MM:SS",
-        help=f"Fixed time for every commit (default: {DEFAULT_TIME})",
-    )
-    parser.add_argument(
-        "--start",
-        metavar="TAG",
-        help=f"Begin from this release tag (default: earliest {RELEASE_TAG_PATTERN})",
-    )
-    parser.add_argument(
-        "--end",
-        metavar="TAG",
-        help=f"Stop at this release tag (default: latest {RELEASE_TAG_PATTERN})",
-    )
-
-
-def build_parser():
-    """Construct the argument parser for the whole CLI.
-
-    Positional paths are optional to argparse, so that a bare command word
-    reaches `main` and gets an answer instead of a usage error. Their parsed
-    values go unused: `main` reads the slots itself.
-    """
-    parser = argparse.ArgumentParser(
-        prog="prg",
-        description=(
-            "Public Repo Generator: build a curated public repo from a private one."
-        ),
-    )
-    subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
-
-    generate = subparsers.add_parser(
-        "generate", help=cli_generate.HELP, description=cli_generate.HELP
-    )
-    generate.add_argument(
-        "source", metavar="SOURCE", nargs="?", help="Private repo to read"
-    )
-    generate.add_argument(
-        "target", metavar="TARGET", nargs="?", help="Public repo to create"
-    )
-    add_plan_flags(generate)
-    generate.add_argument(
-        "--author",
-        metavar="IDENTITY",
-        help='"Name <email>" for author and committer (default: git config)',
-    )
-    generate.add_argument(
-        "--weed-out",
-        default=DEFAULT_WEED_OUT,
-        metavar="CMD",
-        help="Path to the weed-out sanitizer (default: none, nothing is filtered)",
-    )
-    generate.add_argument(
-        "--no-sign",
-        action="store_true",
-        help="Build unsigned, whatever the git config says",
-    )
-    mode = generate.add_mutually_exclusive_group()
-    mode.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Report the plan and write nothing. This is the default.",
-    )
-    mode.add_argument(
-        "--commit",
-        action="store_true",
-        help="Actually build the repo",
-    )
-
-    inspect = subparsers.add_parser(
-        "inspect", help=cli_inspect.HELP, description=cli_inspect.HELP
-    )
-    inspect.add_argument(
-        "source", metavar="SOURCE", nargs="?", help="Private repo to read"
-    )
-    add_plan_flags(inspect)
-
-    return parser
 
 
 def main(argv=None):

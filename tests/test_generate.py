@@ -5,9 +5,9 @@ and the shape of the repo it builds. Which tags qualify, what order they come
 in, and what stamp each one gets belong to `plan`, and `test_inspect.py`
 already covers them through that same code.
 
-Nothing here reads a file out of a built repo. `generate` records no trees
-yet, and a test asserting an empty one would have to be rewritten the moment
-it records a real one.
+The tree tests read a built repo through `git ls-tree` rather than off the
+filesystem. What crossed over is what the commit records, and the working tree
+left behind after the last release is a side effect of building it.
 """
 
 import subprocess
@@ -15,6 +15,7 @@ import subprocess
 import pytest
 from conftest import git, init_repo, table
 
+from prg.args import EXIT_ERROR, EXIT_OK
 from prg.cli import main
 
 AUTHOR = "Jane Doe <jane@example.com>"
@@ -22,7 +23,7 @@ AUTHOR = "Jane Doe <jane@example.com>"
 
 def generate(source, target, capsys, *flags):
     """Run `prg generate source target`, assert success, return its lines."""
-    assert main(["generate", str(source), str(target), *flags]) == 0
+    assert main(["generate", str(source), str(target), *flags]) == EXIT_OK
     return capsys.readouterr().out.splitlines()
 
 
@@ -39,6 +40,16 @@ def log(path, fmt):
     the branch actually descends from.
     """
     return git(path, "log", f"--format={fmt}").splitlines()[::-1]
+
+
+def tree(path, rev):
+    """Return a rev's tree as a path to file-mode mapping.
+
+    `git ls-tree -r` prints `<mode> <type> <sha>\t<path>`, so the tab is what
+    separates the path from the rest and a path holding a space survives.
+    """
+    entries = git(path, "ls-tree", "-r", rev).splitlines()
+    return {line.split("\t", 1)[1]: line.split()[0] for line in entries}
 
 
 def local_config(path):
@@ -118,7 +129,7 @@ def test_an_existing_target_is_refused(repo, tmp_path, capsys):
     target.mkdir()
     (target / "keep.txt").write_text("mine\n")
 
-    assert main(["generate", str(repo), str(target), "--commit"]) == 1
+    assert main(["generate", str(repo), str(target), "--commit"]) == EXIT_ERROR
     assert "target already exists" in capsys.readouterr().err
     assert (target / "keep.txt").read_text() == "mine\n"
 
@@ -128,13 +139,77 @@ def test_a_malformed_author_stops_before_anything_is_written(repo, tmp_path, cap
     target = tmp_path / "public"
     argv = ["generate", str(repo), str(target), "--author", "Jane Doe", "--commit"]
 
-    assert main(argv) == 1
+    assert main(argv) == EXIT_ERROR
     assert not target.exists()
 
 
 def test_one_commit_per_release_oldest_first(repo, tmp_path, capsys):
     target, _ = build(repo, tmp_path, capsys)
     assert log(target, "%s") == ["v0.1.0", "v0.2.0"]
+
+
+def test_a_release_holds_the_files_its_tag_held(churn_repo, tmp_path, capsys):
+    """The whole tree crosses over, not a summary of it."""
+    target, _ = build(churn_repo, tmp_path, capsys)
+    assert tree(target, "v0.1.0") == tree(churn_repo, "v0.1.0")
+    assert tree(target, "v0.2.0") == tree(churn_repo, "v0.2.0")
+
+
+def test_a_dropped_file_is_gone_from_the_later_release(churn_repo, tmp_path, capsys):
+    """Each commit is the whole tree, so the wipe has to reach the last one."""
+    target, _ = build(churn_repo, tmp_path, capsys)
+    assert "dropped.txt" in tree(target, "v0.1.0")
+    assert "dropped.txt" not in tree(target, "v0.2.0")
+
+
+def test_the_public_log_shows_the_drop_as_a_deletion(churn_repo, tmp_path, capsys):
+    """What a reader comparing two releases expects to see."""
+    target, _ = build(churn_repo, tmp_path, capsys)
+    changes = git(target, "diff", "--name-status", "v0.1.0", "v0.2.0").splitlines()
+    assert "D\tdropped.txt" in changes
+
+
+def test_an_added_file_reaches_only_the_later_release(churn_repo, tmp_path, capsys):
+    target, _ = build(churn_repo, tmp_path, capsys)
+    assert "added.txt" not in tree(target, "v0.1.0")
+    assert "added.txt" in tree(target, "v0.2.0")
+
+
+def test_a_tracked_file_a_gitignore_names_still_ships(churn_repo, tmp_path, capsys):
+    """Staging without --force would drop it, and say nothing about it."""
+    target, _ = build(churn_repo, tmp_path, capsys)
+    assert "tracked.txt" in tree(target, "v0.1.0")
+
+
+def test_the_executable_bit_crosses_over(churn_repo, tmp_path, capsys):
+    """A tar stream carries the mode git recorded, so a script stays runnable."""
+    target, _ = build(churn_repo, tmp_path, capsys)
+    assert tree(target, "v0.1.0")["tool.sh"] == "100644"
+    assert tree(target, "v0.2.0")["tool.sh"] == "100755"
+
+
+def test_two_tags_on_one_commit_both_reach_the_public_log(churn_repo, tmp_path, capsys):
+    """Identical trees are a fact about the releases, not an error."""
+    target, _ = build(churn_repo, tmp_path, capsys)
+    assert log(target, "%s") == ["v0.1.0", "v0.2.0", "v0.2.1"]
+    assert tree(target, "v0.2.0") == tree(target, "v0.2.1")
+
+
+def test_the_target_survives_every_release(churn_repo, tmp_path, capsys):
+    """The wipe runs once per release and never reaches `.git`."""
+    target, _ = build(churn_repo, tmp_path, capsys)
+    assert (target / ".git").is_dir()
+    assert git(target, "status", "--porcelain") == ""
+
+
+def test_the_source_is_left_as_it_was(churn_repo, tmp_path, capsys):
+    """git archive reads the tag. Nothing is checked out on the private side."""
+    before = git(churn_repo, "rev-parse", "HEAD")
+    build(churn_repo, tmp_path, capsys)
+
+    assert git(churn_repo, "status", "--porcelain") == ""
+    assert git(churn_repo, "rev-parse", "HEAD") == before
+    assert not (churn_repo / ".git" / "worktrees").exists()
 
 
 def test_the_chain_is_linear_from_a_single_root(repo, tmp_path, capsys):
@@ -271,7 +346,7 @@ def test_the_refusal_names_no_sign_as_the_way_out(repo, tmp_path, capsys, monkey
     monkeypatch.chdir(signing_repo(tmp_path / "signer", ssh_key(tmp_path / "id_test")))
     argv = ["generate", str(repo), str(tmp_path / "public"), "--author", AUTHOR]
 
-    assert main(argv) == 1
+    assert main(argv) == EXIT_ERROR
     assert "--no-sign" in capsys.readouterr().err
 
 
@@ -413,7 +488,7 @@ def test_no_identity_refuses_to_build(repo, tmp_path, capsys, monkeypatch):
     no_identity(monkeypatch)
     target = tmp_path / "public"
 
-    assert main(["generate", str(repo), str(target), "--commit"]) == 1
+    assert main(["generate", str(repo), str(target), "--commit"]) == EXIT_ERROR
     assert not target.exists()
     assert "no git identity configured" in capsys.readouterr().err
 
@@ -424,7 +499,7 @@ def test_a_readiness_failure_still_prints_the_whole_report(
     """The report is the deliverable. The exit code is the verdict on it."""
     no_identity(monkeypatch)
 
-    assert main(["generate", str(repo), str(tmp_path / "public")]) == 1
+    assert main(["generate", str(repo), str(tmp_path / "public")]) == EXIT_ERROR
     printed = capsys.readouterr()
 
     assert [line.split()[0] for line in table(printed.out.splitlines())] == [
@@ -440,7 +515,10 @@ def test_every_missing_ingredient_is_named_at_once(repo, tmp_path, capsys, monke
     target = tmp_path / "public"
     target.mkdir()
 
-    assert main(["generate", str(repo), str(target), "--weed-out", "no-such-tool"]) == 1
+    assert (
+        main(["generate", str(repo), str(target), "--weed-out", "no-such-tool"])
+        == EXIT_ERROR
+    )
     failures = capsys.readouterr().err
 
     assert "no git identity configured" in failures
@@ -452,7 +530,7 @@ def test_a_readiness_failure_prints_no_usage_line(repo, tmp_path, capsys, monkey
     """The command line was right. Its usage answers a question nobody asked."""
     no_identity(monkeypatch)
 
-    assert main(["generate", str(repo), str(tmp_path / "public")]) == 1
+    assert main(["generate", str(repo), str(tmp_path / "public")]) == EXIT_ERROR
     assert "Usage:" not in capsys.readouterr().err
 
 
@@ -460,7 +538,7 @@ def test_a_missing_git_is_fatal_before_any_report(repo, tmp_path, capsys, monkey
     """Without git there is no table to print, so there is nothing to report."""
     monkeypatch.setenv("PATH", "")
 
-    assert main(["generate", str(repo), str(tmp_path / "public")]) == 1
+    assert main(["generate", str(repo), str(tmp_path / "public")]) == EXIT_ERROR
     printed = capsys.readouterr()
 
     assert "git is not on PATH" in printed.err

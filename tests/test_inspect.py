@@ -7,12 +7,13 @@ in, and what each line says.
 import pytest
 from conftest import commit_file, git, init_repo, table
 
+from prg.args import EXIT_ERROR, EXIT_OK
 from prg.cli import main
 
 
 def inspect_lines(path, capsys, *flags):
     """Run `prg inspect path` and return its output lines, asserting success."""
-    assert main(["inspect", str(path), *flags]) == 0
+    assert main(["inspect", str(path), *flags]) == EXIT_OK
     return capsys.readouterr().out.splitlines()
 
 
@@ -228,7 +229,7 @@ def test_start_drops_the_releases_before_it(repo, capsys):
 
 
 def test_an_unknown_start_exits_one(repo, capsys):
-    assert main(["inspect", str(repo), "--start", "v9.9.9"]) == 1
+    assert main(["inspect", str(repo), "--start", "v9.9.9"]) == EXIT_ERROR
     assert capsys.readouterr().err.startswith("prg: ")
 
 
@@ -239,7 +240,7 @@ def test_end_drops_the_releases_after_it(repo, capsys):
 
 
 def test_an_unknown_end_exits_one(repo, capsys):
-    assert main(["inspect", str(repo), "--end", "v9.9.9"]) == 1
+    assert main(["inspect", str(repo), "--end", "v9.9.9"]) == EXIT_ERROR
     assert capsys.readouterr().err.startswith("prg: ")
 
 
@@ -248,7 +249,10 @@ def test_an_end_before_the_start_names_both_bounds(repo, capsys):
 
     Naming only the one that lost would send the reader to the wrong flag.
     """
-    assert main(["inspect", str(repo), "--start", "v0.2.0", "--end", "v0.1.0"]) == 1
+    assert (
+        main(["inspect", str(repo), "--start", "v0.2.0", "--end", "v0.1.0"])
+        == EXIT_ERROR
+    )
 
     failure = capsys.readouterr().err
     assert "v0.1.0" in failure and "v0.2.0" in failure
@@ -278,5 +282,5 @@ def test_inspect_exits_one_with_a_message(kind, tmp_path, capsys):
     if kind == "untagged":
         commit_file(path, "first.txt", "first", date="2026-01-01T09:00:00+00:00")
 
-    assert main(["inspect", str(path)]) == 1
+    assert main(["inspect", str(path)]) == EXIT_ERROR
     assert capsys.readouterr().err.startswith("prg: ")
