@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-25
+
+### Added
+
+- `--weed-out` runs the `weed-out` sanitizer over every release tree
+  between extraction and staging, so a public commit records only what that
+  release's keep list allowed.
+- `--weed-out-keep LIST` adds entries to every release's keep list, and turns
+  the sanitizer on by itself.
+- `preflight` checks for `tar`, the second binary every build shells out to.
+
+### Changed
+
+- `--weed-out` is a bare switch instead of a path to the sanitizer. `PATH` is
+  what says where `weed-out` lives.
+
+### Removed
+
+- The `sanitizer` row from the report. Nothing it could name is worth a row
+  now that the flag no longer carries a path.
+
 ## [0.3.1] - 2026-08-22
 
 ### Added

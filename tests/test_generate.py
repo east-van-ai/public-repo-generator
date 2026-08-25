@@ -15,6 +15,7 @@ import subprocess
 import pytest
 from conftest import git, init_repo, table
 
+from prg import generator
 from prg.args import EXIT_ERROR, EXIT_OK
 from prg.cli import main
 
@@ -386,7 +387,7 @@ def test_the_report_names_the_key_a_build_would_use(
     lines = generate(repo, tmp_path / "public", capsys)
     values = [line for line in lines if line.startswith("signing")]
 
-    assert values == [f"signing    {key} (ssh)"]
+    assert values == [f"signing   {key} (ssh)"]
 
 
 def test_the_release_range_reaches_the_build(repo, tmp_path, capsys):
@@ -514,11 +515,13 @@ def test_every_missing_ingredient_is_named_at_once(repo, tmp_path, capsys, monke
     no_identity(monkeypatch)
     target = tmp_path / "public"
     target.mkdir()
-
-    assert (
-        main(["generate", str(repo), str(target), "--weed-out", "no-such-tool"])
-        == EXIT_ERROR
+    monkeypatch.setattr(
+        generator.shutil,
+        "which",
+        lambda name: None if name == "weed-out" else f"/usr/bin/{name}",
     )
+
+    assert main(["generate", str(repo), str(target), "--weed-out"]) == EXIT_ERROR
     failures = capsys.readouterr().err
 
     assert "no git identity configured" in failures

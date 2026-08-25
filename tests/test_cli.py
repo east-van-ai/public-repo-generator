@@ -147,10 +147,10 @@ def test_generate_defaults_match_the_documented_ones():
 
 
 def test_no_sanitizer_runs_unless_asked_for():
-    """`--weed-out` has no default, so nothing is filtered without it."""
+    """Neither flag defaults on, so nothing is filtered without one."""
     parsed = args.build_parser().parse_args(["generate", "source", "target"])
-    assert parsed.weed_out is None
-    assert generator.DEFAULT_WEED_OUT is None
+    assert parsed.weed_out is False
+    assert parsed.weed_out_keep is None
 
 
 def test_inspect_shares_generates_plan_defaults():

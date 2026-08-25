@@ -13,8 +13,8 @@ tagged releases and their timestamps.
 - **Curated timeline**: only `v*` release tags become public commits
 - **Clean room build**: the output repo starts empty and is built from
   extracted release trees, never from the private object store
-- **Optional sanitizer**: point `--weed-out` at the sanitizer and every release
-  is filtered by its own keep list on the way through
+- **Optional sanitizer**: pass `--weed-out` and every release is filtered
+  by its own keep list on the way through
 - **Uniform timestamps**: every commit lands at noon, so the log reads as a set
   of release markers
 - **Honest about what it is**: a presentation of the work, not a record of how
@@ -102,9 +102,9 @@ The comparison is what a visitor lands on.
 ```
 
 1. Collect the `v*` tags reachable from main/master, oldest first
-2. Check each tag out into a scratch tree
+2. Extract that tag's tree straight into the public repo
 3. With `--weed-out`, run the sanitizer over that tree, keeping only what
-   `.weed-out-ignore` names
+   `.weed-out-ignore` and `--weed-out-keep` name
 4. Commit the result, using the tag's own date at a uniform time, signed with
    the key configured where `prg` runs
 5. Recreate the tags on the new commits
@@ -115,7 +115,7 @@ abandoned branches, and the reflog have no route into it.
 
 Filtering the files inside those trees is the sanitizer's own job, and it runs
 only when asked. Without `--weed-out`, each release tag's tree crosses over
-whole. The report says which of the two happened.
+whole.
 
 ## Install
 
@@ -138,7 +138,9 @@ instead. `prg inspect` reports what it found without building anything.
 Sanitizing is opt-in, and it is the only other thing. To use it, put
 [weed-out](https://github.com/east-van-ai/weed-out) on your `PATH`, keep a
 `.weed-out-ignore` file in the source repo listing what should ship, and pass
-`--weed-out`.
+`--weed-out`. A release that predates that file can be covered with
+`--weed-out-keep` instead. The flag is a switch and never a path: `PATH` is what
+says where `weed-out` lives.
 
 ## Quick Start
 
@@ -164,7 +166,7 @@ Build it with the sanitizer, so every release ships only what its own
 `.weed-out-ignore` allows:
 
 ```bash
-prg generate ./private-repo ./public-repo --weed-out weed-out --commit
+prg generate ./private-repo ./public-repo --weed-out --commit
 ```
 
 Build with a different public identity, starting from a later release:
@@ -210,7 +212,8 @@ never deletes anything it did not create.
 | `--tz {local,gmt}` | `local` | Timezone for the uniform timestamp |
 | `--time HH:MM:SS` | `12:00:00` | Fixed time applied to every commit |
 | `--author "Name <email>"` | git config | Identity for author and committer |
-| `--weed-out CMD` | none | Path to the sanitizer. Without it, nothing is filtered |
+| `--weed-out` | off | Run the sanitizer over every release tree |
+| `--weed-out-keep LIST` | none | Extra keep entries, comma-separated. Turns the sanitizer on by itself |
 | `--start TAG` | earliest `v*` tag | Begin from this release tag |
 | `--end TAG` | latest `v*` tag | Stop at this release tag |
 | `--no-sign` | off | Build unsigned, whatever the config says |
@@ -220,6 +223,28 @@ never deletes anything it did not create.
 Dry run is the default. `--commit` is what makes `prg` write. Both check the
 ingredients first and print what a build would use, so a dry run that comes back
 clean is the build's own gate rather than a guess at it.
+
+`prg` adds `.git/` to the keep list on every sanitizer run, so a keep list
+written without a repository in mind cannot take the repository out with
+everything else. Nothing beyond that is protected. A release whose keep list does
+not name `.weed-out-ignore` ships without it, which is usually what you want: the
+keep list is a fact about the private repo.
+
+`--weed-out-keep` adds entries on top of whatever the release already allows. It
+only ever adds, so a file a release already allows still ships, and it turns the
+sanitizer on by itself, so `--weed-out` beside it is optional.
+
+Its entries are weed-out's own patterns. One with no `/` matches a filename at
+any depth, and one containing a `/` matches the path instead. Watch `*.*`, which
+looks like "keep everything" and is not: it wants a dot in the name, so
+`LICENSE` and `Makefile` fall out of it. `--weed-out-keep "*"` is the one that
+keeps every file.
+
+A release cut before you added `.weed-out-ignore` has no keep list of its own,
+so sanitizing it keeps nothing and that release lands as an empty commit. The
+build finishes rather than stopping, so one run shows every empty release at
+once. `--weed-out-keep` is the way through: paste in what the latest keep list
+holds, comma-separated, and it covers every release in the range.
 
 `--start` and `--end` name release tags, and both are inclusive. Either can
 stand alone. `--start` leaves the early releases out, which is how a public repo
@@ -280,7 +305,7 @@ reordering.
 - `1`: any error `prg` raises itself (a half-typed command, a path too many,
     `SOURCE` is not a git repo, `TARGET` already exists, no `v*` tags found on
     main/master, no git identity configured, a signing key that disagrees with
-    the author, or a sanitizer named by `--weed-out` is missing or fails)
+    the author, or a sanitizer that is missing or fails)
 - `2`: argparse's own errors (an unknown flag, an unknown command, or
     `--dry-run` and `--commit` together)
 
@@ -297,7 +322,8 @@ a flag asks for something specific, and both paths are still missing.
 ## Companion Tools
 
 - [weed-out](https://github.com/east-van-ai/weed-out) is an allow-list file
-  sanitizer. Pass `--weed-out` and `prg` runs it at every commit it builds.
+  sanitizer. Pass `--weed-out` and `prg` runs it at every commit it
+  builds.
 
 ## Philosophy
 

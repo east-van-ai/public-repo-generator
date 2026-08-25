@@ -9,12 +9,7 @@ from datetime import time
 from importlib import metadata
 
 from prg import cli_generate, cli_inspect
-from prg.generator import (
-    DEFAULT_TIME,
-    DEFAULT_TZ,
-    DEFAULT_WEED_OUT,
-    RELEASE_TAG_PATTERN,
-)
+from prg.generator import DEFAULT_TIME, DEFAULT_TZ, RELEASE_TAG_PATTERN
 
 # Argparse hardcodes 2 in `ArgumentParser.error()`, which calls `sys.exit`
 # itself, so EXIT_ARGPARSE never returns through `main` and is only asserted
@@ -127,9 +122,15 @@ def build_parser():
     )
     generate.add_argument(
         "--weed-out",
-        default=DEFAULT_WEED_OUT,
-        metavar="CMD",
-        help="Path to the weed-out sanitizer (default: none, nothing is filtered)",
+        action="store_true",
+        help="Run the weed-out sanitizer over every release tree "
+        "(default: off, nothing is filtered)",
+    )
+    generate.add_argument(
+        "--weed-out-keep",
+        metavar="LIST",
+        help="Extra keep entries, comma-separated, added to every release. "
+        "Turns the sanitizer on by itself",
     )
     generate.add_argument(
         "--no-sign",

@@ -132,6 +132,38 @@ whatever the tag's own keep list allows. The protection comes from the caller
 rather than from the file being read, which is what makes it hold for a keep
 list `prg` has never seen.
 
+The run happens in the target's own working tree, once the tag has been
+extracted into it and before anything is staged:
+
+```text
+weed-out delete . --keep ".git/" --commit
+```
+
+`delete` rather than `trash`, and `--commit` rather than a dry run. The tree
+being weeded is one `prg` laid down seconds earlier out of a tag that still
+exists, so there is nothing there worth recovering, and a preview would leave
+`git add` staging the tree unfiltered.
+
+`.git/` is the whole of what `prg` protects. A tag whose keep list does not name
+`.weed-out-ignore` ships without it, and that is often the right answer: the keep
+list is a fact about the private repo, and the public one does not have to carry
+it. Protecting anything beyond the repository would be `prg` deciding what a
+release ships, which is the tag's own business.
+
+Supplying that entry is where prg's part ends. Whether it protects everything
+under `.git` is `weed-out`'s own invariant to hold, and `prg` does not audit the
+tree afterwards to confirm that it did. A sanitizer that got that wrong is a bug
+to fix in the sanitizer, and a caller cannot do better than report what came
+back. The one thing `prg` still looks at is whether anything survived at all,
+which is a question about the commit it is about to make rather than a check on
+the sanitizer's work.
+
+That standing `--keep` also means one of `weed-out`'s own refusals can never
+reach a `prg` user. `weed-out --commit` stops when no keep list resolves at all,
+since silence there is likelier to be a forgotten argument than an instruction to
+empty the directory. A run from `prg` always carries at least `.git/`, so the
+list is never empty and that refusal never fires.
+
 The source repo is only ever read. Nothing is checked out in place there.
 
 ### The sanitizer is opt-in
@@ -143,8 +175,23 @@ Sanitizing is a choice about one particular repo, not a property of every
 rebuild. Plenty of repos have nothing to strip, and the ones that do are opting
 in either way.
 
-The report says whether a sanitizer ran, so the mode is never something to infer
-from the output.
+The report says nothing about it. Which mode a build ran in is what the command
+line was, and the page carries no row for it. A page that claims less needs no
+qualifying; the row can arrive later, with something worth putting in it.
+
+### The sanitizer is named, not located
+
+`--weed-out` is a bare switch. It never carries a path.
+
+`weed-out` is a companion tool with one name, installed the way any CLI is
+installed, and `PATH` is what says where it lives. A flag answering that question
+too would be a second place for the answer to be wrong, and a build pointed at
+the wrong binary does not announce itself.
+
+What that costs is the ability to see which binary a build reached, which the
+flag carried when it held a path. Nothing pays that back for now. `which
+weed-out` answers it from the shell that ran the build, and one that is wrong
+there was going to be wrong either way.
 
 ## One public commit per release tag
 
@@ -187,16 +234,48 @@ collide there.
 
 ## Which keep list applies
 
-When the sanitizer runs, each tag is filtered by the `.weed-out-ignore` found in
-that tag's own tree. A release ships what its own rules allowed at the time it
-was cut. Reaching for today's keep list instead would rebuild old releases under
-a judgement they were never made with.
+When the sanitizer runs, a tag carrying a `.weed-out-ignore` is filtered by that
+one. A release ships what its own rules allowed at the time it was cut. Reaching
+for today's keep list over a release's own would rebuild it under a judgement it
+was never made with.
 
-That leaves no way to retroactively drop a file an old release happened to
-allow. A `--weed-out-keep` flag passing a list straight through to
-`weed-out --keep` would cover it. Whether that override should also suppress
-the tag's own `.weed-out-ignore` is open, and it needs `weed-out` to grow a way
-of working from `--keep` alone.
+`--weed-out-keep` is what reaches a release whose own rules are not enough. Its
+entries join the `--keep` list `prg` already builds, behind `.git/` and beside
+whatever the tag's `.weed-out-ignore` adds, so one flag covers every release in
+the range:
+
+```text
+weed-out delete . --keep ".git/,docs/,*.md" --commit
+```
+
+It adds and never subtracts. `weed-out`'s grammar is keep-only, with no negation
+and no way to work from `--keep` while ignoring the file next to it, so a tag
+that allows a file will still ship that file. What the flag covers is the other
+case: a release cut before the keep list existed, or one whose keep list never
+thought about a path that has since become worth shipping.
+
+Duplicates need no handling here. `weed-out` merges its two sources itself and
+dedupes while preserving order, so an entry named twice is named once by the
+time anything is matched.
+
+A release cut before any `.weed-out-ignore` existed has no rules of its own, and
+`prg` does not go looking for a substitute. Lending the latest release's keep
+list backwards was considered and dropped. It costs a flag, a second reader for
+`weed-out`'s file format, and a rule about which tag does the lending, in return
+for something `--weed-out-keep` already does: reading the latest keep list and
+passing it as a comma-separated list is a copy and a paste.
+
+### `--weed-out-keep` implies the sanitizer
+
+`--weed-out-keep` on its own turns the sanitizer on, with `weed-out` as the
+command. Naming extra keep entries is an intention to sanitize, so `prg` reads it
+as one. Refusing a command line whose meaning was never in doubt would be a
+second flag to type for nothing.
+
+Nothing about the failure moves. `weed-out` still has to be on `PATH`, and
+`preflight` reports a missing one exactly as it does for `--weed-out`. An
+intention to sanitize is taken as true; whether it can be carried out is still
+checked.
 
 ## Each commit is the whole tree
 
@@ -209,9 +288,15 @@ Layering would leak. What survived would be whatever the previous release left
 behind plus whatever the current one adds, and that combination is not what
 either keep list allowed on its own.
 
-A release whose sanitized tree comes out empty is an error. An empty commit
-says nothing in a showcase repo, and an empty tree nearly always means the keep
-list and the tag's layout have drifted apart.
+A release whose sanitized tree comes out empty still becomes a commit. It means
+the keep list and the tag's layout have drifted apart, usually a release cut
+before any `.weed-out-ignore` existed, where the only entry left is the `.git/`
+`prg` supplied itself. `--weed-out-keep` is what covers it.
+
+Stopping there would hand back one release per run while already knowing about
+the rest, which is the drip-feed the dry run's failure list exists to avoid. The
+build finishes instead. Every empty release is then in the log at once, and one
+round of `--weed-out-keep` covers the lot.
 
 ## How a tree becomes a commit
 
@@ -235,14 +320,15 @@ to a directory `prg` created. `preflight` refuses a target that already exists,
 so nothing sitting in there arrived any other way.
 
 No scratch directory stands between the source and the target, and the sanitizer
-will not need one either. It runs where the tree stands, with `.git/` added to
+does not need one either. It runs where the tree stands, with `.git/` added to
 the keep list by `prg` rather than trusted to the tag's own. Care is what keeps
 the repository out of the blast radius, not distance.
 
-`--allow-empty` stays. Two tags on one commit, or two releases whose trees match,
-leave `git commit` nothing to record. A release that crossed over belongs in the
-public log either way, so an identical tree is a fact about the releases rather
-than an error.
+`--allow-empty` stays, and now covers three cases. Two tags on one commit, two
+releases whose trees match, and a sanitized tree that came out with nothing in
+it. All three leave `git commit` nothing to record. A release that crossed over
+belongs in the public log either way, so each is a fact about the releases
+rather than an error.
 
 ## Timestamps
 
@@ -509,11 +595,17 @@ Keeping remote access out of the tool means it never needs credentials.
 
 ## Ingredients before the build
 
-Every check `prg` can make happens before any of the work. Git on `PATH`. The
-source being a repo with releases in it. `--start` and `--end` naming ones that
-are there. `--author` parsing. An identity to build under. A signing key that
-names the same account as that identity. A target that does not exist. A
-sanitizer that does, when `--weed-out` names one.
+Every check `prg` can make happens before any of the work. Git on `PATH`, and
+`tar` beside it. The source being a repo with releases in it. `--start` and
+`--end` naming ones that are there. `--author` parsing. An identity to build
+under. A signing key that names the same account as that identity. A target that
+does not exist. `weed-out` on `PATH`, when a sanitizer was asked for.
+
+`tar` is on that list because extracting a release is `git archive` piped into
+it, which makes it the second binary every build shells out to. It is checked
+whether or not a sanitizer runs, since every build extracts. Without it a build
+fails at the first release, with the target directory already created, which is
+the shape of failure this stage exists to prevent.
 
 Presence on `PATH` is the whole of the git check. No version is asserted,
 because nothing the build runs needs one. The public branch is set with
@@ -610,6 +702,18 @@ the mistake instead of reporting it.
 `isatty` decides nothing. What was typed decides, so the same command line
 answers the same way from a shell, from cron, and from a test.
 
+### The documentation it answers with is the manual
+
+Nothing installs README.md. `pipx install` puts a command on `PATH` and leaves
+the prose behind in the repository it was built from, so a bare `prg generate`
+is the only manual most people who run `prg` will ever open.
+
+Length is therefore the wrong thing to economise on there. A command's docstring
+carries what a reader needs in order to use it, including the parts that read
+like a footnote in a README, because the reader has nowhere else to look them
+up. That is why the sanitizer's entry explains weed-out's pattern grammar rather
+than naming the flag and stopping.
+
 ### `--version` reads the installed metadata
 
 `prg --version` prints one line and exits 0. It is documentation, the same as
@@ -662,7 +766,7 @@ one: an unknown command, an unknown flag, a bad value.
 
 ## What `inspect` prints
 
-The values a build would use, then the tags that would become commits, newest
+The values a build would use, then the tags that would become commits, latest
 first. Two columns: the name, and the uniform timestamp it would receive.
 
 Newest first because the table previews a log, and `git log` reads that way. A
@@ -694,11 +798,19 @@ and a dry run.
 
 Refuse and stop. `prg` does not delete anything it did not create.
 
+## Note
+
+A build that fails part way leaves the target directory standing with a repo
+inside it. A sanitizer returning non-zero does that, and so does a git call that
+fails. `preflight` refuses a target that already exists, so a second attempt
+means removing the first one by hand.
+
+That is the one place where refusing to delete costs something, and it is worth
+paying. Cleaning up after itself would put `prg` in the business of removing
+directories, and a tool that never does that cannot remove the wrong one.
+
 ## Open questions
 
-- **Retroactive exclusion.** A `--weed-out-keep` flag, and whether it layers on
-  top of the tag's own `.weed-out-ignore` or replaces it. Blocked on `weed-out`
-  supporting a `--keep`-only mode.
 - **Timezone vocabulary.** `--tz {local,gmt}` offers an abbreviation where a
   zone belongs. IANA names such as `America/Vancouver` would accept any zone
   and get daylight saving right, with `local` kept as the special value.
@@ -714,16 +826,20 @@ Refuse and stop. `prg` does not delete anything it did not create.
   unreachable objects. The part that stalls it is checking the output's files
   against the keep list, since a command given only the output repo cannot
   see a keep list unless a release happened to ship one.
-- **What the report says shipped.** The release table answers which releases
-  crossed over and at what stamp, never which files. That is survivable while a
-  tree crosses over whole, and it stops being so once `--weed-out` decides what
-  survives. A file count as a third column would fit the one-page report where a
-  full listing would bury it. The knot is the dry run. Counting a source tag's
-  files extracts nothing and is exact, but filtering happens on a real extracted
-  tree, so a preview can say what a tag holds and not what would survive. Both
-  commands print through one renderer, and a column only one of them can fill
-  honestly is the drift that module exists to prevent.
-- **A `tar` check before the build.** Extracting a release runs `git archive`
-  into `tar`, so `tar` is the second binary the build shells out to and
-  `preflight` does not look for it. A missing one fails at the first release
-  rather than before the build starts, which is the whole point of the stage.
+
+## Use of AI
+
+Both the use of AI and its disclosure are deliberate. Code and
+documentation in this project are written in collaboration with
+Artificial Intelligence (AI). The division of labour: the AI explores,
+challenges assumptions and edge cases, and drafts; the human
+initiates, drafts the designs, explores alongside the AI, reviews
+every change, and decides what gets committed.
+
+---
+
+**East Van AI** · AI for the rest of us! · Vancouver, BC, Canada
+
+[github.com/east-van-ai](https://github.com/east-van-ai) · <east-van-ai@proton.me>
+
+Copyright (c) 2026 Go Nakamaru

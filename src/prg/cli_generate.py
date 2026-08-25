@@ -14,22 +14,41 @@
 #
 # Options:
 #
-#    --tz {local,gmt}    timezone for the uniform timestamp (default: local)
-#    --time HH:MM:SS     fixed time for every commit (default: 12:00:00)
-#    --author IDENTITY   "Name <email>" for author and committer
-#    --weed-out CMD      path to the weed-out sanitizer (default: none)
-#    --start TAG         begin from this release tag (default: earliest v*)
-#    --end TAG           stop at this release tag (default: latest v*)
-#    --no-sign           build unsigned, whatever the git config says
-#    --dry-run           report the plan and write nothing. The default.
-#    --commit            actually build the repo.
+#    --tz {local,gmt}      timezone for the uniform timestamp (default: local)
+#    --time HH:MM:SS       fixed time for every commit (default: 12:00:00)
+#    --author IDENTITY     "Name <email>" for author and committer
+#    --weed-out            run the weed-out sanitizer (default: off)
+#    --weed-out-keep LIST  extra keep entries, comma-separated
+#    --start TAG           begin from this release tag (default: earliest v*)
+#    --end TAG             stop at this release tag (default: latest v*)
+#    --no-sign             build unsigned, whatever the git config says
+#    --dry-run             report the plan and write nothing. The default.
+#    --commit              actually build the repo.
 #
 # Dry run is the default. `--commit` is what makes prg write.
 #
 # Both modes check the ingredients first and print what a build would use: the
-# identity, the signing key, the zone, the sanitizer. A missing one is reported
-# with everything else, so a run names all of them at once rather than one per
-# attempt, and then exits 1 without writing.
+# identity, the signing key, the zone. A missing one is reported with everything
+# else, so a run names all of them at once rather than one per attempt, and then
+# exits 1 without writing.
+#
+# The sanitizer is off unless asked for. `--weed-out` turns it on, and so
+# does `--weed-out-keep` on its own, since naming keep entries is an intention
+# to sanitize. `prg` adds `--keep ".git/"` itself, so a keep list that never
+# thought about the repository cannot take it out. Nothing else is protected.
+#
+# Each release is filtered by the `.weed-out-ignore` in its own tree, plus
+# whatever `--weed-out-keep` names. A release carrying no such file has the flag
+# and nothing else, so sanitizing one without it keeps `.git/` alone and commits
+# an empty tree. That is not refused: the empty commit is the answer, so one run
+# shows every release it applies to rather than stopping at the first.
+#
+# Keep entries are weed-out's patterns, comma-separated. A pattern with no `/`
+# matches a filename at any depth, so `*.md` reaches every markdown file in the
+# tree; one containing a `/` matches the path instead, so `src/*.py` reaches
+# only that directory. Watch `*.*`, which is not "keep everything": it wants a
+# dot in the name, so `LICENSE` and `Makefile` fall out of it.
+# `--weed-out-keep "*"` is the entry that keeps every file.
 #
 # Commits are signed with the key configured where prg runs, and unsigned when
 # there is none. The key and the author have to name one account, since a host
@@ -49,8 +68,6 @@ from prg import generator, report
 
 HELP = "Rebuild TARGET from SOURCE's release tags"
 USAGE = "prg generate SOURCE TARGET [--dry-run | --commit] [options]"
-
-NO_SANITIZER = "none, every release tree crosses over whole"
 
 # Terser than `inspect`'s answer to the same question, and deliberately. Here a
 # missing identity appears again among the failures, which carries the
@@ -72,13 +89,16 @@ def run(source, target, args):
     the failures come last, so one run names all of them instead of one per
     attempt. Then it is prg's own error, exit 1, and nothing was written.
     """
+    sanitize = generator.sanitizing(args.weed_out, args.weed_out_keep)
+
     build = generator.Build(
         source=source,
         target=target,
         tz=args.tz,
         time=args.time,
         author=args.author,
-        weed_out=args.weed_out,
+        weed_out=sanitize,
+        weed_out_keep=args.weed_out_keep,
         start=args.start,
         end=args.end,
         commit=args.commit,
@@ -88,7 +108,7 @@ def run(source, target, args):
         source,
         target=target,
         author=args.author,
-        weed_out=args.weed_out,
+        sanitize=sanitize,
         sign=not args.no_sign,
     )
     commits = generator.plan(build)
@@ -100,7 +120,6 @@ def run(source, target, args):
             ("timezone", args.tz),
             ("time", args.time.isoformat()),
             ("target", str(target)),
-            ("sanitizer", args.weed_out or NO_SANITIZER),
         ],
         commits,
     )
