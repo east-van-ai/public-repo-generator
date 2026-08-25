@@ -19,10 +19,15 @@ from collections import namedtuple
 from datetime import datetime, timedelta, timezone
 from itertools import groupby
 
-from prg import gitio
+from prg import gitio, sanitizer
 
 RELEASE_TAG_PATTERN = "v*"
 PUBLIC_BRANCH = "main"
+
+# The sanitizer prg shells out to. `--weed-out` is a switch rather than a path,
+# so PATH is what says where this lives. See DESIGN.md, "The sanitizer is named,
+# not located".
+WEED_OUT_COMMAND = "weed-out"
 
 # "Name <email>". The name is non-greedy so a name holding no angle bracket
 # stops at the last space before the address.
@@ -30,7 +35,6 @@ AUTHOR_PATTERN = re.compile(r"^(.+?)\s*<([^<>]+)>$")
 
 DEFAULT_TIME = "12:00:00"
 DEFAULT_TZ = "local"
-DEFAULT_WEED_OUT = None  # no sanitizer unless --weed-out names one
 
 # What `--tz` selects. None is the machine's own zone, and it stays None rather
 # than becoming a fixed offset now: the offset a date gets has to be the one in
@@ -51,12 +55,17 @@ No message field. The public commit message is the tag name, so `name` is
 already carrying it. See DESIGN.md, "Commit message".
 """
 
-Build = namedtuple("Build", "source target tz time author weed_out start end commit")
+Build = namedtuple(
+    "Build",
+    "source target tz time author weed_out weed_out_keep start end commit",
+)
 """The settings for a single `generate` run.
 
 `commit` is the safety switch. False means report only. `author` of None
-means fall back to the ambient git identity. Assembled by `cli_generate`, so
-nothing argparse produces reaches this module.
+means fall back to the ambient git identity. `weed_out` is already resolved:
+`cli_generate` folds `--weed-out-keep`'s implication into it, so everything
+downstream reads one answer. Assembled by `cli_generate`, so nothing argparse
+produces reaches this module.
 """
 
 
@@ -218,12 +227,27 @@ def plan(build):
     )
 
 
-def preflight(source, target=None, author=None, weed_out=None, sign=True):
+def sanitizing(weed_out, weed_out_keep):
+    """Return whether a build runs the sanitizer.
+
+    `--weed-out-keep` answers yes on its own. Naming extra keep entries is an
+    intention to sanitize, so prg reads it as one rather than refusing a
+    command line whose meaning was never in doubt. Whether the sanitizer can
+    actually be run is `preflight`'s question, not this one.
+
+    Resolved once, in `cli_generate`, and carried in the `Build`. Deriving it
+    twice is how a report and a build come to disagree.
+    """
+    return bool(weed_out or weed_out_keep)
+
+
+def preflight(source, target=None, author=None, sanitize=False, sign=True):
     """Check the ingredients a build needs, and resolve the values it would use.
 
     Runs once, after the command line is parsed and before any of the work.
-    `target` and `weed_out` are None for a command that writes nothing and
-    runs no sanitizer, and those checks are skipped rather than passed.
+    `target` is None for a command that writes nothing, and `sanitize` False
+    for one that runs no sanitizer, so those checks are skipped rather than
+    passed.
 
     `sign` False is `--no-sign`, and it resolves no key at all. Nothing is
     checked about a key that will not be used.
@@ -241,6 +265,13 @@ def preflight(source, target=None, author=None, weed_out=None, sign=True):
         raise PRGError("git is not on PATH")
 
     failures = []
+
+    # Extraction is `git archive` piped into `tar`, so tar is the second binary
+    # every build shells out to. Checked whether or not a sanitizer runs, since
+    # every build extracts. Not fatal like git: the table still prints, and
+    # printing it is how the gap gets found.
+    if shutil.which("tar") is None:
+        failures.append("tar is not on PATH")
 
     identity = author_identity(author)
     if identity is None:
@@ -261,8 +292,8 @@ def preflight(source, target=None, author=None, weed_out=None, sign=True):
     if target is not None and os.path.exists(target):
         failures.append(f"target already exists: {target}")
 
-    if weed_out is not None and shutil.which(weed_out) is None:
-        failures.append(f"sanitizer not on PATH: {weed_out}")
+    if sanitize and shutil.which(WEED_OUT_COMMAND) is None:
+        failures.append(f"sanitizer not on PATH: {WEED_OUT_COMMAND}")
 
     return Ingredients(identity, signing, failures)
 
@@ -403,6 +434,11 @@ def reconstruct(build, commits, identity, signing):
     copy is for the commits made there by hand later, and it changes nothing
     about this build.
 
+    With `weed_out`, the sanitizer runs over each extracted tree before
+    anything is staged. A tree it empties is committed like any other: stopping
+    there would hand back one release per run while already knowing about the
+    rest, and the log shows every empty release at once instead.
+
     A failure part-way names the release it stopped at, and leaves the target
     as it stands. The `try` wraps the loop rather than its body: every step
     inside re-raises, so the first failure ends the build either way, and the
@@ -421,8 +457,10 @@ def reconstruct(build, commits, identity, signing):
         for commit in commits:
             clear_worktree(build.target)
             gitio.extract(build.source, commit.name, build.target)
+            if build.weed_out:
+                sanitizer.run(WEED_OUT_COMMAND, build.target, build.weed_out_keep)
             gitio.stage_all(build.target)
             gitio.commit(build.target, commit.name, commit.stamp, identity, signing)
             gitio.tag(build.target, commit.name)
-    except (gitio.GitError, OSError) as failure:
+    except (gitio.GitError, sanitizer.SanitizeError, OSError) as failure:
         raise PRGError(f"stopped at {commit.name}: {failure}") from failure
