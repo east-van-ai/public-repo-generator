@@ -18,6 +18,9 @@ EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_ARGPARSE = 2
 
+PROG = "prg"
+"""The word typed on the command line, which the parser and `version_line` share."""
+
 
 def installed_version():
     """Return the version of the installed public-repo-generator distribution.
@@ -32,6 +35,16 @@ def installed_version():
         return metadata.version("public-repo-generator")
     except metadata.PackageNotFoundError:
         return "unknown (not installed)"
+
+
+def version_line():
+    """Return the program name and the installed version on one line.
+
+    Both `version` and `--version` print this, so the two spellings cannot
+    drift apart. The name printed is `prg`, the word that was typed, not
+    `public-repo-generator`, the distribution the number was read from.
+    """
+    return f"{PROG} {installed_version()}"
 
 
 def clock_time(value):
@@ -90,7 +103,7 @@ def build_parser():
     values go unused: `main` reads the slots itself.
     """
     parser = argparse.ArgumentParser(
-        prog="prg",
+        prog=PROG,
         description=(
             "Public Repo Generator: build a curated public repo from a private one."
         ),
@@ -98,12 +111,14 @@ def build_parser():
     parser.add_argument(
         "--version",
         action="version",
-        # `%(prog)s` is `prg`, the word typed. The distribution the number came
-        # from is called something else, and nobody types that.
-        version=f"%(prog)s {installed_version()}",
+        version=version_line(),
         help="Print the installed version and exit.",
     )
     subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
+
+    # Carries no arguments and no flags, which is what makes argparse reject
+    # `prg version --tz gmt` as an unknown flag. `main` prints the line.
+    subparsers.add_parser("version", help="Print the installed version and exit.")
 
     generate = subparsers.add_parser(
         "generate", help=cli_generate.HELP, description=cli_generate.HELP

@@ -32,9 +32,6 @@
 # Paths come first, then flags, whose order among themselves is free. Bare
 # `prg` prints this text and exits 0. Asking is not a usage error.
 #
-# `prg --version` prints the installed version. That is documentation too, so
-# it exits 0. It belongs to the tool, never to a command.
-#
 # prg reads no piped input.
 #
 # Exit codes:
@@ -52,7 +49,7 @@ import sys
 from collections import namedtuple
 
 from prg import cli_generate, cli_inspect
-from prg.args import EXIT_ERROR, EXIT_OK, build_parser
+from prg.args import EXIT_ERROR, EXIT_OK, build_parser, version_line
 from prg.generator import PRGError
 
 Command = namedtuple("Command", "module slots")
@@ -66,6 +63,13 @@ COMMANDS = {
     "generate": Command(cli_generate, ("SOURCE", "TARGET")),
     "inspect": Command(cli_inspect, ("SOURCE",)),
 }
+
+VERSION_USAGE = "prg version"
+"""`version` carries no module to hold its usage line, so the line lives here.
+
+It is not in `COMMANDS`: no module, no path slots, and no docstring to print.
+See CLAUDE.md, Architecture.
+"""
 
 
 def leading_paths(tokens):
@@ -84,7 +88,7 @@ def leading_paths(tokens):
     return paths
 
 
-def usage_error(command, message):
+def usage_error(usage, message):
     """Report a command line prg could not read, with that command's usage.
 
     The usage line belongs here and nowhere else. A readiness failure exits 1
@@ -93,7 +97,7 @@ def usage_error(command, message):
     See DESIGN.md, "Readiness failures print no usage line".
     """
     print(f"prg: {message}", file=sys.stderr)
-    print(f"Usage: {command.module.USAGE}", file=sys.stderr)
+    print(f"Usage: {usage}", file=sys.stderr)
     return EXIT_ERROR
 
 
@@ -121,20 +125,33 @@ def main(argv=None):
     if any(extra.startswith("-") for extra in extras):
         parser.parse_args(tokens)  # argparse names the flag better, exit 2
 
-    command = COMMANDS[args.command]
     paths = leading_paths(tokens[1:])
+
+    # Answered here rather than through the table, and after parsing rather
+    # than before it, so a flag after the word is argparse's unknown flag,
+    # exit 2, instead of prg's own slip.
+    if args.command == "version":
+        if paths:
+            return usage_error(
+                VERSION_USAGE, f"version takes nothing after it: {paths[0]!r}"
+            )
+        print(version_line())
+        return EXIT_OK
+
+    command = COMMANDS[args.command]
 
     if len(paths) < len(command.slots):
         needed = " and ".join(command.slots)
         if len(command.slots) > 1:
             needed = f"both {needed}"
-        return usage_error(command, f"{args.command} needs {needed}")
+        return usage_error(command.module.USAGE, f"{args.command} needs {needed}")
 
     if len(paths) > len(command.slots):
         stray = paths[len(command.slots)]
         last = command.slots[-1]
         return usage_error(
-            command, f"{args.command} takes nothing after {last}: {stray!r}"
+            command.module.USAGE,
+            f"{args.command} takes nothing after {last}: {stray!r}",
         )
 
     # Each command's run() takes what that command needs, so the call is spelled

@@ -29,26 +29,6 @@ date costs nothing. A leaked credential costs something real. Where this
 document sounds relaxed and the sanitizing sections sound careful, that split
 is the reason.
 
-## Clean logs
-
-Imagine this.
-
-```text
-$ git log --oneline --all --graph --format="%h %d %s %an <%ae> %ai"
-
-* a450123 (HEAD -> main, tag: v1.2.1) v1.2.1 Jim Doe <jim.doe@example.com> 2026-06-03 12:00:00 -0700
-* c691120 (tag: v1.2.0) v1.2.0 Jim Doe <jim.doe@example.com> 2026-05-21 12:00:00 -0700
-* db90110 (tag: v1.1.0) v1.1.0 Jim Doe <jim.doe@example.com> 2026-04-10 12:00:00 -0700
-* c80b100 (tag: v1.0.0) v1.0.0 Jim Doe <jim.doe@example.com> 2026-03-29 12:00:00 -0700
-* abea031 (tag: v0.3.1) v0.3.1 Jim Doe <jim.doe@example.com> 2026-02-19 12:00:01 -0800
-* c42f030 (tag: v0.3.0) v0.3.0 Jim Doe <jim.doe@example.com> 2026-02-19 12:00:00 -0800
-* d80b020 (tag: v0.2.0) v0.2.0 Jim Doe <jim.doe@example.com> 2026-01-11 12:00:00 -0800
-* c7a8010 (tag: v0.1.0) v0.1.0 Jim Doe <jim.doe@example.com> 2025-12-18 12:00:00 -0800
-```
-
-Every commit is a release. Every time is noon. Two releases cut on the same day
-sit one second apart, oldest first. Nothing else is in there at all.
-
 ## Commit dates are writable
 
 Git presents a commit's dates as though it observed them. They are fields.
@@ -60,8 +40,8 @@ every release with the moment of the rebuild. With it, releases can be laid
 down in order, each carrying its own date, each descending from the one before.
 
 Ancestry is the payload. Orphan commits can hold identical file contents and
-still lose it, which is the failure the README describes under "What This
-Replaces".
+still lose it, which is the failure the README describes under "Why not just
+use orphan commits?".
 
 The fact itself was one question away and free. Forming the question took
 months.
@@ -324,11 +304,11 @@ does not need one either. It runs where the tree stands, with `.git/` added to
 the keep list by `prg` rather than trusted to the tag's own. Care is what keeps
 the repository out of the blast radius, not distance.
 
-`--allow-empty` stays, and now covers three cases. Two tags on one commit, two
-releases whose trees match, and a sanitized tree that came out with nothing in
-it. All three leave `git commit` nothing to record. A release that crossed over
-belongs in the public log either way, so each is a fact about the releases
-rather than an error.
+`--allow-empty` covers three cases. Two tags on one commit, two releases whose
+trees match, and a sanitized tree that came out with nothing in it. All three
+leave `git commit` nothing to record. A release that crossed over belongs in
+the public log either way, so each is a fact about the releases rather than an
+error.
 
 ## Timestamps
 
@@ -714,16 +694,18 @@ like a footnote in a README, because the reader has nowhere else to look them
 up. That is why the sanitizer's entry explains weed-out's pattern grammar rather
 than naming the flag and stopping.
 
-### `--version` reads the installed metadata
+### The version reads the installed metadata
 
-`prg --version` prints one line and exits 0. It is documentation, the same as
-a bare command word, so it shares that code.
+`prg version` and `prg --version` print the same one line and exit 0. Both are
+documentation, the same as a bare command word, so they share that code. One
+helper builds the line and both spellings call it, so the two cannot say
+different things.
 
 The number lives in `pyproject.toml` and reaches the CLI through the installed
 distribution's metadata. No second copy sits in the source. A checkout that has
 never been installed has no metadata to read, and every invocation past a bare
 word builds the parser, so an unguarded lookup would take down every command
-rather than this one flag. The miss is answered instead, `unknown (not
+rather than this one answer. The miss is answered instead, `unknown (not
 installed)`, and the parser goes on being built.
 
 The name printed is `prg`, the word that was typed, not
@@ -733,6 +715,12 @@ differ here. The command line is what the reader is holding.
 The flag sits on the root parser and nowhere else, so `prg generate --version`
 is an unknown flag, exit 2. Asking what the tool is has one place to be asked,
 and the tool answers it rather than a command.
+
+The word is answered outside the command table. It has no path slot, no
+options, and no documentation of its own to print, which is the whole of what
+that table holds. Anything following it is a stray, exit 1. A flag following it
+is argparse's unknown flag, exit 2, because the word is a subparser carrying
+nothing.
 
 ## Positions are decided, not inferred
 
@@ -797,17 +785,6 @@ and a dry run.
 ## Existing output directory
 
 Refuse and stop. `prg` does not delete anything it did not create.
-
-## Note
-
-A build that fails part way leaves the target directory standing with a repo
-inside it. A sanitizer returning non-zero does that, and so does a git call that
-fails. `preflight` refuses a target that already exists, so a second attempt
-means removing the first one by hand.
-
-That is the one place where refusing to delete costs something, and it is worth
-paying. Cleaning up after itself would put `prg` in the business of removing
-directories, and a tool that never does that cannot remove the wrong one.
 
 ## Open questions
 

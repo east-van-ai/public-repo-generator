@@ -204,6 +204,40 @@ def test_a_command_may_not_be_asked_for_the_version():
     assert exit_attempt.value.code == args.EXIT_ARGPARSE
 
 
+def test_the_word_and_the_flag_print_the_same_line(capsys):
+    """One helper builds the line, so the two spellings cannot drift apart.
+
+    Asserted against each other rather than against a pattern, which is what
+    catches a drift that still looks like a version line.
+    """
+    assert cli.main(["version"]) == args.EXIT_OK
+    from_word = capsys.readouterr().out
+
+    with pytest.raises(SystemExit) as exit_attempt:
+        cli.main(["--version"])
+    assert exit_attempt.value.code == args.EXIT_OK
+    from_flag = capsys.readouterr().out
+
+    assert from_word == from_flag
+    assert from_word.strip().startswith("prg ")
+
+
+def test_the_version_word_takes_nothing_after_it(capsys):
+    """It carries no path slot, so anything following it is a stray, exit 1."""
+    assert cli.main(["version", "foo"]) == args.EXIT_ERROR
+
+    complaint = capsys.readouterr().err
+    assert "'foo'" in complaint
+    assert "Usage: prg version" in complaint
+
+
+def test_the_version_word_carries_no_flags():
+    """Its subparser has no arguments, so argparse names the flag, exit 2."""
+    with pytest.raises(SystemExit) as exit_attempt:
+        cli.main(["version", "--tz", "gmt"])
+    assert exit_attempt.value.code == args.EXIT_ARGPARSE
+
+
 def test_an_uninstalled_prg_still_builds_its_parser(monkeypatch):
     """Every invocation past a bare word builds the parser, so a miss cannot raise.
 
