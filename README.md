@@ -1,28 +1,56 @@
 # prg - Public Repo Generator
 
-Build a clean public git repository from a private one. Only your tagged
-releases cross over, stamped with a uniform timestamp. Sanitizing is opt-in.
+**Turn a private development repository into a clean, public release history.**
 
-## Why `prg` Exists
+`public-repo-generator` (`prg`) creates a public repository from the **actual releases** of a private Git repository. It keeps the history that matters to people looking at the finished project, while leaving the development diary where it belongs: in the development repository.
 
-Even when the code is clean, publishing the whole git repo means publishing the
-whole process. The late-night refactorings, the abandoned experiments, the
-messy middle. `prg` lets you create a showcase repo that includes only your
-tagged releases and their timestamps.
+> **Show the work. Not the dirty dishes.**
 
-- **Curated timeline**: only `v*` release tags become public commits
-- **Clean room build**: the output repo starts empty and is built from
-  extracted release trees, never from the private object store
-- **Optional sanitizer**: pass `--weed-out` and every release is filtered
-  by its own keep list on the way through
-- **Uniform timestamps**: every commit lands at noon, so the log reads as a set
-  of release markers
-- **Honest about what it is**: a presentation of the work, not a record of how
-  the work happened
+## Why?
+
+A development repository is a record of how software was built. It contains experiments, abandoned ideas, temporary fixes, branches, rewrites, and all the other things that naturally happen while making software.
+
+A public repository has a different job. It should show what you released, how the project evolved, and what someone can use today. `prg` creates that public view from your real release history.
+
+Think of a restaurant with an open kitchen. You can see that the food is being made properly without asking to see how the ingredients were prepared at 2 a.m. the night before. The public repository is the dining room and the development repository is the kitchen. Both are real. They simply serve different purposes.
+
+## What it does
+
+Suppose your private repository contains:
+
+```text
+development history
+      │
+      ├── experiments
+      ├── abandoned work
+      ├── branches
+      ├── fixes
+      └── releases
+             │
+             ▼
+        v0.1.0
+        v0.2.0
+        v0.3.0
+        v1.0.0
+```
+
+`prg` uses those release points to build a new repository:
+
+```text
+v0.1.0 ── v0.2.0 ── v0.3.0 ── v1.0.0
+```
+
+The resulting repository is a **real Git repository with real ancestry**, not a collection of unrelated snapshots. Visitors can still inspect the evolution of the project:
+
+```bash
+git diff v0.2.0 v0.3.0
+```
+
+and GitHub can show meaningful comparisons between releases.
 
 ## Clean logs
 
-Imagine this.
+This is what the generated repository looks like from the inside.
 
 ```text
 $ git log --oneline --all --graph --format="%h %d %s %an <%ae> %ai"
@@ -37,318 +65,109 @@ $ git log --oneline --all --graph --format="%h %d %s %an <%ae> %ai"
 * c7a8010 (tag: v0.1.0) v0.1.0 Jim Doe <jim.doe@example.com> 2025-12-18 12:00:00 -0800
 ```
 
-Every commit is a release. Every time is noon. Two releases cut on the same day
-sit one second apart, oldest first. Nothing else is in there at all.
+Every commit is a release. Every time is noon. Two releases cut on the same day sit one second apart, oldest first. Nothing else is in there at all.
 
-## How That Log Is Made
+## Why not just use orphan commits?
 
-Git presents a commit's dates as though it watched the clock. They are fields.
-Set them to whatever you like, and what comes out the other side is an ordinary
-repo that every git tool reads without complaint.
-
-That is the whole trick. `prg` creates an empty repo, then lays down one commit
-per release tag, oldest first. Each carries the calendar date its release was
-cut, with the time forced to noon, and each descends from the release before it.
-The message is the tag name and the branch is `main`.
-
-Nothing is copied out of the private repo's object store. The public repo is
-built forwards, out of nothing, which is why untagged commits, abandoned
-branches, and the reflog have no route into it. That holds whether or not the
-sanitizer runs.
-
-## What This Replaces
-
-Publishing a release without its history means an orphan commit: a root with no
-parent. Publishing the next release means a second orphan sitting beside the
-first. Do that three times and the graph shows three disconnected stems instead
-of a sequence.
-
-The ugly graph is the visible symptom. The real loss is ancestry. Nothing
-descends from anything, so `git log --follow`, blame, and GitHub's compare view
-have nothing to walk. A viewer can see that v3 exists. They cannot see what
-changed between v2 and v3, which is the one thing a release history is for.
-
-`prg` builds a real chain instead. Each release lands on top of the one before
-it, so the comparisons work.
-
-That comparison is the thing worth showing. The diff between two releases is
-what a project actually did that cycle, in one view, without a tour. A private
-repo holds the same information and will not offer it, because a checkout opens
-on a file tree and a commit list, and nobody scrolls a log hunting for where one
-release ended and the next began. A repo built by `prg` has nothing else in it.
-The comparison is what a visitor lands on.
-
-## How It Works
+You could publish each release as an orphan commit. That gives you clean snapshots, but no meaningful ancestry:
 
 ```text
-┌─────────────────────┐
-│   Private Repo      │
-│   (full history)    │
-└──────────┬──────────┘
-           │  v* tags on main
-           ▼
-┌─────────────────────┐
-│   prg Rebuild       │
-│   - Check out tag   │
-│   - Sanitize if set │
-│   - Commit at noon  │
-└──────────┬──────────┘
-           │
-           ▼
-┌─────────────────────┐
-│   Public Repo       │
-│   (releases only)   │
-└─────────────────────┘
+v0.1.0
+
+v0.2.0
+
+v0.3.0
+
+v1.0.0
 ```
 
-1. Collect the `v*` tags reachable from main/master, oldest first
-2. Extract that tag's tree straight into the public repo
-3. With `--weed-out`, run the sanitizer over that tree, keeping only what
-   `.weed-out-ignore` and `--weed-out-keep` name
-4. Commit the result, using the tag's own date at a uniform time, signed with
-   the key configured where `prg` runs
-5. Recreate the tags on the new commits
+Git cannot tell that one release evolved from another.
 
-Nothing from the private object store is ever copied. The public repo is built
-from scratch out of trees extracted one release at a time, so untagged commits,
-abandoned branches, and the reflog have no route into it.
+`prg` takes a different approach. It reconstructs the release history as a connected sequence of commits:
 
-Filtering the files inside those trees is the sanitizer's own job, and it runs
-only when asked. Without `--weed-out`, each release tag's tree crosses over
-whole.
+```text
+v0.1.0
+   │
+   ▼
+v0.2.0
+   │
+   ▼
+v0.3.0
+   │
+   ▼
+v1.0.0
+```
 
-## Install
+The public history therefore communicates **how the released software evolved**, without exposing the private development history.
 
-`prg` requires Python 3.9 or newer and depends only on the standard library.
-Tested in CI on Python 3.9 through 3.14.
+## What the history means
+
+A repository generated by `prg` is deliberately a curated history. Each public commit represents a released state of the project. It does not claim to reproduce the exact sequence of development events, and that distinction is intentional.
+
+The public repository is:
+
+> **a presentation of the work, not a record of how the work happened.**
+
+The original development repository remains the authoritative record of development. The generated repository is the authoritative public presentation of the releases you chose to publish.
+
+`prg` is meant for projects with a genuine development history and meaningful releases. It works particularly well when you want to publish an existing private project, expose only selected releases, keep development branches private, or open a repository without losing Git ancestry. The goal is not to make a project *look* as though it has history. The goal is to make the real release history visible.
+
+## Installation
+
+`prg` is designed to be installed as a command-line tool.
+
+**With pipx**
 
 ```bash
 pipx install "git+https://github.com/east-van-ai/public-repo-generator.git"
 ```
 
-`pipx` installs Python CLI tools into isolated environments, so there are no
-dependency conflicts to worry about. Worth having around if you use more than
-one Python CLI tool.
-
-You also need `git` on your `PATH` and a git identity configured. Git invents one
-from your account name and your machine's hostname when it finds none, and a
-repo built for showcasing is the last place that belongs, so `prg` refuses
-instead. `prg inspect` reports what it found without building anything.
-
-Sanitizing is opt-in, and it is the only other thing. To use it, put
-[weed-out](https://github.com/east-van-ai/weed-out) on your `PATH`, keep a
-`.weed-out-ignore` file in the source repo listing what should ship, and pass
-`--weed-out`. A release that predates that file can be covered with
-`--weed-out-keep` instead. The flag is a switch and never a path: `PATH` is what
-says where `weed-out` lives.
-
-## Quick Start
-
-Preview which releases would cross over:
+Then:
 
 ```bash
-prg inspect ./private-repo
+prg --help
 ```
 
-See what a build would produce, without writing anything:
+That's it.
+
+## Basic usage
+
+Start with a private repository containing tagged releases, then generate a public repository from those releases.
 
 ```bash
-prg generate ./private-repo ./public-repo
+prg generate <source-repository> <destination-repository> --commit
 ```
 
-Build it for real:
+Dry run is the default. Without `--commit`, `prg` reports the plan it would carry out and writes nothing.
 
-```bash
-prg generate ./private-repo ./public-repo --commit
-```
+## Documentation
 
-Build it with the sanitizer, so every release ships only what its own
-`.weed-out-ignore` allows:
+This README covers the user-facing idea and workflow. The rest is in two places.
 
-```bash
-prg generate ./private-repo ./public-repo --weed-out --commit
-```
+`prg --help` prints the command list, and a bare command word such as `prg generate` prints that command's full reference: every option, release selection, sanitizing, Git metadata, and signing.
 
-Build with a different public identity, starting from a later release:
+[DESIGN.md](DESIGN.md) covers why `prg` works the way it does. The reasoning behind the uniform timestamps, the clean-room build, the safety checks, and the questions still open.
 
-```bash
-prg generate ./private-repo ./public-repo \
-    --author "Jane Doe <jane@example.com>" \
-    --start v0.3.0 \
-    --commit
-```
-
-Publish a stretch of releases and nothing outside it:
-
-```bash
-prg generate ./private-repo ./public-repo \
-    --start v0.2.0 \
-    --end v0.4.0 \
-    --commit
-```
-
-Then push it yourself. `prg` never touches a remote.
-
-## CLI Reference
-
-`prg` with nothing after it prints its own documentation, and so does a
-command word on its own. `prg --version` prints the installed version.
-All three exit 0.
-
-### Commands
-
-| Command | Description |
-| --- | --- |
-| `prg generate SOURCE TARGET` | Rebuild TARGET from SOURCE's release tags |
-| `prg inspect SOURCE` | List the tags that would become commits |
-
-`SOURCE` must be an existing git repo. `TARGET` must not exist yet, since `prg`
-never deletes anything it did not create.
-
-### Flags for `generate`
-
-| Flag | Default | Description |
-| --- | --- | --- |
-| `--tz {local,gmt}` | `local` | Timezone for the uniform timestamp |
-| `--time HH:MM:SS` | `12:00:00` | Fixed time applied to every commit |
-| `--author "Name <email>"` | git config | Identity for author and committer |
-| `--weed-out` | off | Run the sanitizer over every release tree |
-| `--weed-out-keep LIST` | none | Extra keep entries, comma-separated. Turns the sanitizer on by itself |
-| `--start TAG` | earliest `v*` tag | Begin from this release tag |
-| `--end TAG` | latest `v*` tag | Stop at this release tag |
-| `--no-sign` | off | Build unsigned, whatever the config says |
-| `--dry-run` | on | Report the plan, write nothing |
-| `--commit` | off | Actually build the repo |
-
-Dry run is the default. `--commit` is what makes `prg` write. Both check the
-ingredients first and print what a build would use, so a dry run that comes back
-clean is the build's own gate rather than a guess at it.
-
-`prg` adds `.git/` to the keep list on every sanitizer run, so a keep list
-written without a repository in mind cannot take the repository out with
-everything else. Nothing beyond that is protected. A release whose keep list does
-not name `.weed-out-ignore` ships without it, which is usually what you want: the
-keep list is a fact about the private repo.
-
-`--weed-out-keep` adds entries on top of whatever the release already allows. It
-only ever adds, so a file a release already allows still ships, and it turns the
-sanitizer on by itself, so `--weed-out` beside it is optional.
-
-Its entries are weed-out's own patterns. One with no `/` matches a filename at
-any depth, and one containing a `/` matches the path instead. Watch `*.*`, which
-looks like "keep everything" and is not: it wants a dot in the name, so
-`LICENSE` and `Makefile` fall out of it. `--weed-out-keep "*"` is the one that
-keeps every file.
-
-A release cut before you added `.weed-out-ignore` has no keep list of its own,
-so sanitizing it keeps nothing and that release lands as an empty commit. The
-build finishes rather than stopping, so one run shows every empty release at
-once. `--weed-out-keep` is the way through: paste in what the latest keep list
-holds, comma-separated, and it covers every release in the range.
-
-`--start` and `--end` name release tags, and both are inclusive. Either can
-stand alone. `--start` leaves the early releases out, which is how a public repo
-begins at the version worth showing. `--end` leaves the late ones out, which is
-how a release that is tagged but not yet announced stays private. A tag outside
-the release set is an error, and so is an `--end` earlier than the `--start`
-beside it.
-
-`--author` falls back to the identity configured where `prg` runs. There has to
-be one. `prg` refuses to build rather than let git invent a name and address
-from your machine.
-
-Commits are signed with the key configured in that same place, and unsigned when
-there is none. `prg` reads `user.signingkey` and `gpg.format` and hands them to
-git, so nothing new has to be set up: if your ordinary commits are signed, the
-generated ones are too, in whichever format you already use. The report names the
-key it found. That line earns its place once you keep more than one account,
-because a host only shows a commit as verified when the key and the address
-belong to the same one. `prg` refuses to build when they disagree, since what it
-would produce looks finished and is not. `--no-sign` builds unsigned whatever the
-config says, and is the way past a mismatch you actually want.
-
-The target gets a copy of both halves in its own `.git/config`: the identity, the
-key, and the format. None of it changes the build, which passes all three
-directly. It is there for the day you amend the public repo by hand, so that
-commit takes the public identity and the public key rather than the development
-ones sitting in your global config. An unsigned build turns signing off there
-instead. Local config never travels, so this reaches your working copy of the
-target and nothing that gets pushed.
-
-A key with a passphrase asks for it during the build, the same way any signed
-commit does. A build with no terminal to ask on, under cron or an editor task,
-wants the key unlocked first.
-
-### Flags for `inspect`
-
-| Flag | Default | Description |
-| --- | --- | --- |
-| `--tz {local,gmt}` | `local` | Timezone for the uniform timestamp |
-| `--time HH:MM:SS` | `12:00:00` | Fixed time applied to every commit |
-| `--start TAG` | earliest `v*` tag | Begin from this release tag |
-| `--end TAG` | latest `v*` tag | Stop at this release tag |
-
-`inspect` prints the timestamp each release would carry and lists the releases
-that would cross over, so it takes the flags that shape both. It reads `SOURCE`
-and stops there. Newest release first, the way `git log` reads, since that is
-the log it is previewing.
-
-Flags come after the command and its paths. Their order among themselves is
-free, but the paths are read from their positions, so
-`prg generate --commit ./private-repo ./public-repo` is an error rather than a
-reordering.
-
-### Exit codes
-
-- `0`: success, and documentation. A bare command word is a question, so `prg`
-    and `prg inspect` both print their documentation and exit 0
-- `1`: any error `prg` raises itself (a half-typed command, a path too many,
-    `SOURCE` is not a git repo, `TARGET` already exists, no `v*` tags found on
-    main/master, no git identity configured, a signing key that disagrees with
-    the author, or a sanitizer that is missing or fails)
-- `2`: argparse's own errors (an unknown flag, an unknown command, or
-    `--dry-run` and `--commit` together)
-
-Exit 1 covers two different failures. A usage error, where what you typed is the
-problem, prints the message and the usage line. A readiness failure, where the
-command was right and something it needed was missing, prints the full report
-instead, because a usage line would answer a question you did not ask.
-
-Note where the line falls. `prg generate` asks what `generate` does and exits
-0. `prg generate ./private-repo` names one path and forgets the other, which
-is a slip rather than a question, and exits 1. So does `prg generate --commit`:
-a flag asks for something specific, and both paths are still missing.
-
-## Companion Tools
-
-- [weed-out](https://github.com/east-van-ai/weed-out) is an allow-list file
-  sanitizer. Pass `--weed-out` and `prg` runs it at every commit it
-  builds.
-
-## Philosophy
+## The idea in one picture
 
 ```text
-    "Show the meal, not the dirty dishes."
+             PRIVATE
+          development repo
+                 │
+                 │
+        real release tags
+                 │
+                 ▼
+        ┌─────────────────┐
+        │       prg        │
+        └─────────────────┘
+                 │
+                 ▼
+              PUBLIC
+           release repo
+
+        v0.1 ─ v0.2 ─ v0.3 ─ v1.0
 ```
-
-`prg` isn't about hiding. It's about presentation. You decide what surfaces,
-what stays backstage, and how the story reads.
-
-## Notes
-
-### Releases only, main/master only
-
-Tags outside main/master are ignored, and so are tags that do not match `v*`.
-The result is a linear release timeline. Untagged work never appears.
-
-### The timeline is curated, not accurate
-
-Dates are flattened to a uniform time and most commits never appear at all.
-That is the point. A public repo built by `prg` shows what was released, not
-how it was built.
-
-See [DESIGN.md](DESIGN.md) for the reasoning behind these decisions and the
-questions still open.
 
 ## Use of AI
 
