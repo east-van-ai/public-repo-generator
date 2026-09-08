@@ -13,7 +13,7 @@ from prg.generator import DEFAULT_TIME, DEFAULT_TZ, RELEASE_TAG_PATTERN
 
 # Argparse hardcodes 2 in `ArgumentParser.error()`, which calls `sys.exit`
 # itself, so EXIT_ARGPARSE never returns through `main` and is only asserted
-# against. See DESIGN.md, "Positions are decided, not inferred".
+# against. See docs/CLI.md, "Positions are decided, not inferred".
 EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_ARGPARSE = 2
@@ -29,7 +29,7 @@ def installed_version():
     installed metadata, never through a second copy in the source. A checkout
     that was never installed has no metadata to read, and every invocation past
     a bare word builds the parser, so the miss is answered rather than raised.
-    See DESIGN.md, "`--version` reads the installed metadata".
+    See docs/CLI.md, "The version reads the installed metadata".
     """
     try:
         return metadata.version("public-repo-generator")

@@ -1,7 +1,7 @@
 """How a report is laid out.
 
 Both commands print the same page: the values a build would use, the releases
-it would lay down, and a count. One renderer is what makes DESIGN.md's claim
+it would lay down, and a count. One renderer is what makes docs/CLI.md's claim
 hold, that a preview cannot drift from the build it previews. Two copies of
 these loops could drift, and would.
 
@@ -53,6 +53,12 @@ def page(values, commits):
     The table reads newest first, the way `git log` does. `plan` returns the
     commits oldest first, because that is the order a build lays them down in,
     so the reversal happens here at the last possible moment.
+
+    The message column appears only when a `prg-msg/` marker made some release
+    say something other than its own name. Without one it would print the first
+    column again on every row. That column is also the only place the marker's
+    prose can be read before it publishes, which is why the check is for any
+    override rather than a flag someone has to remember.
     """
     label = max(len(name) for name, _ in values)
     for name, text in values:
@@ -60,7 +66,11 @@ def page(values, commits):
 
     print()
     width = max(len(commit.name) for commit in commits)
+    overridden = any(commit.message != commit.name for commit in commits)
     for commit in reversed(commits):
-        print(f"{commit.name:<{width}}  {commit.stamp.isoformat()}")
+        line = f"{commit.name:<{width}}  {commit.stamp.isoformat()}"
+        if overridden:
+            line += f"  {commit.message}"
+        print(line)
 
     print(f"\n{len(commits)} release{'' if len(commits) == 1 else 's'}.")

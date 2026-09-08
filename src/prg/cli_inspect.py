@@ -1,5 +1,7 @@
 """
-# ~~~ ~~~ ~~~ ~~~ ~~~ prg inspect ~~~ ~~~ ~~~ ~~~ ~~~
+# ~~~ ~~~ ~~~ ~~~ ~~~ ~~~ ~~~ prg inspect ~~~ ~~~ ~~~ ~~~ ~~~ ~~~ ~~~
+#
+# https://github.com/east-van-ai/public-repo-generator
 #
 # List the v* release tags in SOURCE that would become public commits, newest
 # first. Reads SOURCE and writes nothing.
@@ -23,9 +25,13 @@
 # Newest first, the way `git log` reads, since that is the log being
 # previewed. A build still lays the commits down oldest first.
 #
-# No message column. The public commit message is the tag name, so a third
-# column would print the first one again. A private tag annotation never
-# crosses over.
+# A third column appears only when some release carries a `prg-msg/` tag,
+# whose message its public commit takes in place of the tag name. With no such
+# tag the column would print the first one again on every line.
+#
+# That column is where the prose gets read before it publishes, so `inspect` is
+# the review step for it. A release tag's own annotation still never crosses
+# over.
 #
 # The stamp is the one a build would use, so `inspect` takes the flags that
 # shape it. Releases sharing a date in the chosen zone are spaced a second
@@ -54,13 +60,18 @@ def run(source, args):
     `inspect` carries `--tz`, `--time`, `--start`, and `--end`, so both the
     stamp it prints and the set it lists are what a build would produce.
 
-    Newest first. The table previews a log, and a log reads that way. `plan`
-    still returns them oldest first, because that is the order a build needs,
-    so the reversal is presentation and lives here.
+    Newest first. The table previews a log, and a log reads that way.
+    `public_timeline` still returns them oldest first, because that is the
+    order a build needs, so the reversal is presentation and lives here.
+
+    That one call rather than the steps spelled out here, because resolving
+    `prg-msg/` markers can refuse. A preview assembling its own arrangement of
+    the same calls is how a preview comes to tolerate what a build rejects.
     """
     ingredients = generator.preflight(source)
-    releases = generator.span(generator.release_tags(source), args.start, args.end)
-    commits = generator.public_commits(releases, args.tz, args.time)
+    commits = generator.public_timeline(
+        source, args.start, args.end, args.tz, args.time
+    )
 
     report.page(
         [

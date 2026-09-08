@@ -6,7 +6,7 @@ module knows is how to invoke it and what to do when it comes back non-zero.
 
 It does not check the tool's work afterwards. Whether `.git/` in a keep list
 protects everything under `.git` is `weed-out`'s own invariant, and a caller
-cannot do better than report what came back. See DESIGN.md, "Where the
+cannot do better than report what came back. See docs/DESIGN.md, "Where the
 sanitizer runs".
 """
 

@@ -11,7 +11,7 @@ not a second concern.
 
 Read and write both. No reflog expiry and no `gc`: a repo built commit by
 commit out of nothing holds nothing unreachable, and its reflog already carries
-the manufactured dates. See DESIGN.md, "Clean room, not history rewriting".
+the manufactured dates. See docs/DESIGN.md, "Clean room, not history rewriting".
 
 `extract` is the one call that does not go through `run_git`. It carries a tar
 stream rather than text, and it hands that stream to `tar`.
@@ -241,6 +241,40 @@ def release_tags(path, branch, pattern):
     return listed.splitlines()
 
 
+def message_tags(path, pattern):
+    """Return every message-override tag: its name, whether annotated, subject.
+
+    One `for-each-ref` answers all three, so a marker carrying nothing is
+    spotted without a second call. Reading the object type is load-bearing
+    rather than tidy: a lightweight tag points straight at a commit, and this
+    format then reports that commit's own subject, so a marker with no message
+    of its own looks exactly like one that has a message.
+
+    `%(contents:subject)` stops at the first blank line, so a body written
+    under the message cannot ride along.
+
+    Git strips the trailing tab off the last line when the subject there is
+    empty, which is why the split tolerates a missing third field rather than
+    trusting the format string to have produced one.
+    """
+    listed = run_git(
+        [
+            "for-each-ref",
+            "--format=%(refname:strip=2)\t%(objecttype)\t%(contents:subject)",
+            pattern,
+        ],
+        cwd=path,
+    )
+
+    markers = []
+    for line in listed.splitlines():
+        fields = line.split("\t", 2)
+        subject = fields[2] if len(fields) > 2 else ""
+        markers.append((fields[0], fields[1] == "tag", subject))
+
+    return markers
+
+
 def commit_date(path, rev):
     """Return the committer date of the commit at `rev`, strict ISO 8601.
 
@@ -281,7 +315,7 @@ def set_identity(path, name, email):
     otherwise take the ambient identity. `user.useConfigOnly` makes the
     invented identity impossible in this repo rather than merely unnecessary.
     Local config never travels, so this protects the working copy and not the
-    published repo. See DESIGN.md, "The target keeps a copy".
+    published repo. See docs/DESIGN.md, "The target keeps a copy".
     """
     run_git(["config", "user.name", name], cwd=path)
     run_git(["config", "user.email", email], cwd=path)
@@ -302,7 +336,7 @@ def set_signing(path, signing):
     not to sign. A key is written with `commit.gpgsign = true` beside it, so a
     hand-made commit is not the one bare commit in a verified log.
 
-    See DESIGN.md, "The target keeps a copy".
+    See docs/DESIGN.md, "The target keeps a copy".
     """
     if signing is None:
         run_git(["config", "commit.gpgsign", "false"], cwd=path)

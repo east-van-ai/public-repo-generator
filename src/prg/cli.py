@@ -1,14 +1,14 @@
 """
 # ==============================================
 # East Van AI -- AI for the rest of us!
-# https://github.com/east-van-ai
+# https://github.com/east-van-ai/public-repo-generator
 # contact: east-van-ai@proton.me
 # ==============================================
 #
-# ~~~ ~~~ ~~~ ~~~ ~~~ prg ~~~ ~~~ ~~~ ~~~ ~~~
+# ~~~ ~~~ ~~~ ~~~ ~~~ public repo generator (prg) ~~~ ~~~ ~~~ ~~~ ~~~
 #
-# From a private repo, this CLI generates a new public repo holding only the
-# v* release tags found on main/master.
+# From a private repo, this CLI generates a new public repo holding
+# only the v* release tags found on main/master.
 #
 # Usage:
 #
@@ -20,17 +20,11 @@
 #    generate    Rebuild TARGET from SOURCE's v* release tags.
 #    inspect     List the tags that would become commits.
 #
-# SOURCE  an existing git repo, for `generate` and `inspect`.
-# TARGET  the public repo. `generate` requires that it does not exist yet.
-#
-# Run a command with nothing else after it for its own documentation,
-# including the options it takes:
-#
-#    prg generate
-#    prg inspect
+# SOURCE    an existing git repo, for `generate` and `inspect`.
+# TARGET    the public repo. `generate` requires that it does not exist yet.
 #
 # Paths come first, then flags, whose order among themselves is free. Bare
-# `prg` prints this text and exits 0. Asking is not a usage error.
+# `prg` prints this documentation text.
 #
 # prg reads no piped input.
 #
@@ -78,7 +72,7 @@ def leading_paths(tokens):
     The documented grammar puts every path before every flag, so the slots
     are read off the front of the command line. What argparse resolved from
     anywhere else is discarded, since how much it tolerates depends on the
-    interpreter. See DESIGN.md, "Positions are decided, not inferred".
+    interpreter. See docs/CLI.md, "Positions are decided, not inferred".
     """
     paths = []
     for token in tokens:
@@ -94,7 +88,7 @@ def usage_error(usage, message):
     The usage line belongs here and nowhere else. A readiness failure exits 1
     too, and printing the usage beside it would answer a question nobody
     asked: the command line was right, and something it needed was missing.
-    See DESIGN.md, "Readiness failures print no usage line".
+    See docs/CLI.md, "Readiness failures print no usage line".
     """
     print(f"prg: {message}", file=sys.stderr)
     print(f"Usage: {usage}", file=sys.stderr)

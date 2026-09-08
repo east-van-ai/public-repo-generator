@@ -1,5 +1,7 @@
 """
-# ~~~ ~~~ ~~~ ~~~ ~~~ prg generate ~~~ ~~~ ~~~ ~~~ ~~~
+# ~~~ ~~~ ~~~ ~~~ ~~~ ~~~ ~~~ prg generate ~~~ ~~~ ~~~ ~~~ ~~~ ~~~ ~~~
+#
+# https://github.com/east-van-ai/public-repo-generator
 #
 # Rebuild TARGET from SOURCE's v* release tags, one commit per tag. Each commit
 # carries the date of the commit its tag points at, and with --weed-out each
@@ -32,12 +34,13 @@
 # else, so a run names all of them at once rather than one per attempt, and then
 # exits 1 without writing.
 #
-# The sanitizer is off unless asked for. `--weed-out` turns it on, and so
-# does `--weed-out-keep` on its own, since naming keep entries is an intention
-# to sanitize. `prg` adds `--keep ".git/"` itself, so a keep list that never
+# `--weed-out` and `--weed-out-keep`: cf. https://github.com/east-van-ai/weed-out
+# The sanitizer is off unless asked for. `--weed-out` turns it on, and so does
+# `--weed-out-keep` on its own, since naming keep entries is an intention to
+# sanitize. `prg` adds `--keep ".git/"` itself, so a keep list that never
 # thought about the repository cannot take it out. Nothing else is protected.
 #
-# Each release is filtered by the `.weed-out-ignore` in its own tree, plus
+# Each release is filtered by the `.weed-out-ignore` file in its own tree, plus
 # whatever `--weed-out-keep` names. A release carrying no such file has the flag
 # and nothing else, so sanitizing one without it keeps `.git/` alone and commits
 # an empty tree. That is not refused: the empty commit is the answer, so one run
@@ -50,15 +53,26 @@
 # dot in the name, so `LICENSE` and `Makefile` fall out of it.
 # `--weed-out-keep "*"` is the entry that keeps every file.
 #
-# Commits are signed with the key configured where prg runs, and unsigned when
-# there is none. The key and the author have to name one account, since a host
-# judges the address against the account holding the key, and prg refuses a
-# pair that disagrees. `--no-sign` is the way past it, and the way to a build
-# whose hashes can be compared with another's.
+# `--no-sign`: Commits are signed with the key configured where prg runs, and
+# unsigned when there is none. The key and the author have to name one account,
+# since a host judges the address against the account holding the key, and prg
+# refuses a pair that disagrees. `--no-sign` is the way past it, and the way to
+# a build whose hashes can be compared with another's.
 #
-# `--start` and `--end` are inclusive, and either can stand alone. A bound
-# naming no release tag is an error, and so is an `--end` earlier than the
-# `--start` beside it.
+# `--start` and `--end`: These  are inclusive, and either can stand alone. A
+# bound naming no release tag is an error, and so is an `--end` earlier than
+# the `--start` beside it.
+#
+# tags: Each public commit says its tag name, `v2.3.4` and nothing else. A
+# release with an annotated `prg-msg/v2.3.4` tag beside it in SOURCE says that
+# tag's message instead. The marker does not cross over, and a release tag's
+# own annotation never does. `prg inspect` is where the prose gets read before
+# it publishes.
+#
+# errors: A marker naming no release tag is an error, and so is one carrying no
+# message at all, a lightweight tag included. A marker for a release outside
+# `--start` and `--end` is not an error: that release is simply not in this
+# build.
 #
 # The table reads newest first, the way `git log` does. The build still lays
 # the commits down oldest first.

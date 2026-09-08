@@ -24,8 +24,15 @@ from prg import gitio, sanitizer
 RELEASE_TAG_PATTERN = "v*"
 PUBLIC_BRANCH = "main"
 
+# A tag named for a release, whose message that release's public commit carries
+# instead of the tag name. `prg-msg/v0.4.5` overrides `v0.4.5`. The version is
+# in the name because tag names are unique: one fixed name could mark one
+# release in the whole repo. See docs/DESIGN.md, "Commit message".
+MESSAGE_TAG_PREFIX = "prg-msg/"
+MESSAGE_TAG_PATTERN = f"refs/tags/{MESSAGE_TAG_PREFIX}*"
+
 # The sanitizer prg shells out to. `--weed-out` is a switch rather than a path,
-# so PATH is what says where this lives. See DESIGN.md, "The sanitizer is named,
+# so PATH is what says where this lives. See docs/CLI.md, "The sanitizer is named,
 # not located".
 WEED_OUT_COMMAND = "weed-out"
 
@@ -45,14 +52,15 @@ ZONE_BY_NAME = {"local": None, "gmt": timezone.utc}
 Release = namedtuple("Release", "name date")
 """One tag that would become a public commit: its name and its date."""
 
-PublicCommit = namedtuple("PublicCommit", "name stamp")
-"""What a release tag becomes: its name and its uniform stamp.
+PublicCommit = namedtuple("PublicCommit", "name stamp message")
+"""What a release tag becomes: its name, its uniform stamp, and its message.
 
 `Release` is what git reported. This is what the public repo would carry, so
 the date has been replaced by the timestamp the commit would actually get.
 
-No message field. The public commit message is the tag name, so `name` is
-already carrying it. See DESIGN.md, "Commit message".
+`message` is the tag name again for a release with no `prg-msg/` marker, which
+is every release in most builds. A marker is what makes the two differ. See
+docs/DESIGN.md, "Commit message".
 """
 
 Build = namedtuple(
@@ -118,6 +126,45 @@ def release_tags(source):
     )
 
 
+def release_messages(source, releases):
+    """Return the message each `prg-msg/` marker overrides its release with.
+
+    A marker is an annotated tag named for a release, and its subject is what
+    that release's public commit says instead of the tag name. Only the name
+    binds. What the marker points at is never read, so tagging it at HEAD and
+    tagging it at the release both work.
+
+    Two refusals, and each names the marker that was typed rather than the
+    version decoded out of it. A marker naming no release tag is a typo that
+    would otherwise do nothing at all, in silence. A marker with no message
+    looks exactly like an override to whoever wrote it, and a lightweight tag
+    is only the commonest way to end up with one.
+
+    Resolution runs against every release rather than the span, so a marker for
+    a release outside `--start` and `--end` is not a mistake. The span decides
+    what gets built, never what counts as valid.
+    """
+    known = {release.name for release in releases}
+
+    try:
+        markers = gitio.message_tags(source, MESSAGE_TAG_PATTERN)
+    except gitio.GitError as failure:
+        raise PRGError(str(failure)) from failure
+
+    messages = {}
+    for name, annotated, subject in markers:
+        version = name[len(MESSAGE_TAG_PREFIX) :]
+        if version not in known:
+            raise PRGError(f"{name} names no release tag: {version}")
+        if not annotated:
+            raise PRGError(f"{name} is lightweight and carries no message")
+        if not subject:
+            raise PRGError(f"{name} carries an empty message")
+        messages[version] = subject
+
+    return messages
+
+
 def bound_index(releases, name, flag):
     """Return the position of the release `name`, or raise naming `flag`.
 
@@ -166,8 +213,12 @@ def resolved_date(moment, zone):
     return moment.astimezone(zone).date()
 
 
-def public_commits(releases, tz, clock):
+def public_commits(releases, tz, clock, messages):
     """Stamp each release with the timestamp its public commit would carry.
+
+    `messages` is what `release_messages` resolved, keyed by tag name. A
+    release absent from it keeps its tag name as its message, which is every
+    release in a source carrying no markers.
 
     Releases are grouped by their date in the chosen zone, and each group is
     ordered by the instant its commits were made. Grouping is by key rather
@@ -194,6 +245,7 @@ def public_commits(releases, tz, clock):
                 PublicCommit(
                     release.name,
                     uniform_timestamp(zone, clock, date, ordinal),
+                    messages.get(release.name, release.name),
                 )
             )
     return commits
@@ -216,15 +268,29 @@ def uniform_timestamp(zone, clock, date, ordinal):
     return stamp + timedelta(seconds=ordinal)
 
 
+def public_timeline(source, start, end, tz, clock):
+    """Return the public commits a source would produce, oldest first.
+
+    The whole read of the source repo, in the order the steps depend on each
+    other: the releases, then the messages resolved against all of them, then
+    the span, then the stamps.
+
+    `inspect` and `generate` both come through here. Resolving markers is a
+    step that can refuse, so a preview running its own arrangement of these
+    calls would be a preview that tolerates what the build rejects.
+    """
+    releases = release_tags(source)
+    messages = release_messages(source, releases)
+    return public_commits(span(releases, start, end), tz, clock, messages)
+
+
 def plan(build):
     """Return the public commits a build would make, oldest first.
 
     Everything a dry run needs, and everything a real build works from. The
     two run the same code so the preview cannot drift from the build.
     """
-    return public_commits(
-        span(release_tags(build.source), build.start, build.end), build.tz, build.time
-    )
+    return public_timeline(build.source, build.start, build.end, build.tz, build.time)
 
 
 def sanitizing(weed_out, weed_out_keep):
@@ -255,7 +321,7 @@ def preflight(source, target=None, author=None, sanitize=False, sign=True):
     Two kinds of result. Git missing is fatal and raises, because without it
     there is no report to produce and nothing to say about it. Everything else
     comes back in `failures`, so a caller can print the whole page before
-    deciding what the exit code should be. See DESIGN.md, "Ingredients before
+    deciding what the exit code should be. See docs/DESIGN.md, "Ingredients before
     the build".
 
     `source` is named for the checks that will join it here. Its own shape is
@@ -334,7 +400,7 @@ def signing_mismatch(identity, signing):
     A host verifies a commit by asking whether the committer's address is
     verified on the account holding the key. A pair naming two accounts can
     only produce a signed repo that reads Unverified, so it is worth refusing
-    over. See DESIGN.md, "The key and the address have to agree".
+    over. See docs/DESIGN.md, "The key and the address have to agree".
 
     Addresses are compared and names ignored, since the address is what a host
     judges.
@@ -423,7 +489,8 @@ def reconstruct(build, commits, identity, signing):
     Each release is laid down whole: the working tree is emptied, the tag's
     tree is extracted into it, and what landed becomes the commit. `commits`
     comes from `plan`, so the build lays down exactly what the dry run
-    described.
+    described, the message included: a `prg-msg/` marker was resolved there and
+    is not read again here.
 
     `identity` and `signing` are what preflight resolved, passed in rather
     than worked out again here. One resolution means the report and the
@@ -460,7 +527,7 @@ def reconstruct(build, commits, identity, signing):
             if build.weed_out:
                 sanitizer.run(WEED_OUT_COMMAND, build.target, build.weed_out_keep)
             gitio.stage_all(build.target)
-            gitio.commit(build.target, commit.name, commit.stamp, identity, signing)
+            gitio.commit(build.target, commit.message, commit.stamp, identity, signing)
             gitio.tag(build.target, commit.name)
     except (gitio.GitError, sanitizer.SanitizeError, OSError) as failure:
         raise PRGError(f"stopped at {commit.name}: {failure}") from failure
