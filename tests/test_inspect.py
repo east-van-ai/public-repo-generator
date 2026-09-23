@@ -7,8 +7,7 @@ in, and what each line says.
 import pytest
 from conftest import commit_file, git, init_repo, table
 
-from prg.args import EXIT_ERROR, EXIT_OK
-from prg.cli import main
+from prg.cli import EXIT_ERROR, EXIT_OK, main
 
 
 def inspect_lines(path, capsys, *flags):

@@ -8,8 +8,7 @@ the name.
 
 from conftest import git, table
 
-from prg.args import EXIT_ERROR, EXIT_OK
-from prg.cli import main
+from prg.cli import EXIT_ERROR, EXIT_OK, main
 
 OVERRIDE = "baseline v0.1.0 -- CLI surface and the git read layer"
 

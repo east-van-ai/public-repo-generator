@@ -16,8 +16,7 @@ import pytest
 from conftest import git, init_repo, table
 
 from prg import generator
-from prg.args import EXIT_ERROR, EXIT_OK
-from prg.cli import main
+from prg.cli import EXIT_ERROR, EXIT_OK, main
 
 AUTHOR = "Jane Doe <jane@example.com>"
 
@@ -546,3 +545,19 @@ def test_a_missing_git_is_fatal_before_any_report(repo, tmp_path, capsys, monkey
 
     assert "git is not on PATH" in printed.err
     assert printed.out == ""
+
+
+def test_the_target_directory_failing_is_reported_not_crashed(
+    repo, tmp_path, capsys, monkeypatch
+):
+    """Creating the target is the first write. A failure there is a runtime one."""
+    target = tmp_path / "public"
+
+    def refuse(path):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(generator.os, "makedirs", refuse)
+
+    assert main(["generate", str(repo), str(target), "--commit"]) == EXIT_ERROR
+    assert "disk full" in capsys.readouterr().err
+    assert not target.exists()

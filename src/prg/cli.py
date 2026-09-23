@@ -42,37 +42,52 @@
 import sys
 from collections import namedtuple
 
-from prg import cli_generate, cli_inspect
-from prg.args import EXIT_ERROR, EXIT_OK, build_parser, version_line
-from prg.generator import PRGError
+from prg import cli_generate, cli_inspect, errors
+from prg.args import build_parser, version_line
 
-Command = namedtuple("Command", "module slots")
-"""A command word's module, and the path slots it reads.
+# main() returns EXIT_OK or EXIT_ERROR. On usage errors, argparse's
+# ArgumentParser.error() calls sys.exit(2) before main() can return, so
+# EXIT_ARGPARSE is never returned by main(). It's defined for test assertions.
+EXIT_OK = 0
+EXIT_ERROR = 1
+EXIT_ARGPARSE = 2
 
-The module carries its own documentation, usage line, and action, so the
-table only adds what the command line itself decides.
+Command = namedtuple("Command", "bare usage slots action")
+"""A command word's answer to being typed alone, its usage line, the path slots it 
+reads, and the action a full invocation runs.
+
+`bare` returns the text for the bare word; `action` runs the command. For `version`, 
+both read from `version_line`, since running the command answers the bare word.
 """
 
 COMMANDS = {
-    "generate": Command(cli_generate, ("SOURCE", "TARGET")),
-    "inspect": Command(cli_inspect, ("SOURCE",)),
+    "generate": Command(
+        lambda: cli_generate.__doc__.strip(),
+        cli_generate.USAGE,
+        cli_generate.SLOTS,
+        lambda paths, args: cli_generate.run(*paths, args),
+    ),
+    "inspect": Command(
+        lambda: cli_inspect.__doc__.strip(),
+        cli_inspect.USAGE,
+        cli_inspect.SLOTS,
+        lambda paths, args: cli_inspect.run(*paths, args),
+    ),
+    "version": Command(
+        version_line,
+        "prg version",
+        (),
+        lambda paths, args: print(version_line()),
+    ),
 }
-
-VERSION_USAGE = "prg version"
-"""`version` carries no module to hold its usage line, so the line lives here.
-
-It is not in `COMMANDS`: no module, no path slots, and no docstring to print.
-See CLAUDE.md, Architecture.
-"""
 
 
 def leading_paths(tokens):
     """Return the tokens ahead of the first flag.
 
-    The documented grammar puts every path before every flag, so the slots
-    are read off the front of the command line. What argparse resolved from
-    anywhere else is discarded, since how much it tolerates depends on the
-    interpreter. See docs/CLI.md, "Positions are decided, not inferred".
+    Every path comes before every flag, so the slots are read off the front of the
+    line. Argparse's own positional matches are discarded, since how much it
+    back-fills depends on the interpreter version.
     """
     paths = []
     for token in tokens:
@@ -83,26 +98,29 @@ def leading_paths(tokens):
 
 
 def usage_error(usage, message):
-    """Report a command line prg could not read, with that command's usage.
-
-    The usage line belongs here and nowhere else. A readiness failure exits 1
-    too, and printing the usage beside it would answer a question nobody
-    asked: the command line was right, and something it needed was missing.
-    See docs/CLI.md, "Readiness failures print no usage line".
-    """
+    """Report a command line prg could not read, with that command's usage."""
+    sys.stdout.flush()
     print(f"prg: {message}", file=sys.stderr)
     print(f"Usage: {usage}", file=sys.stderr)
     return EXIT_ERROR
 
 
-def main(argv=None):
-    """Parse arguments, dispatch to a command module, and return an exit code.
+def readiness_error(message):
+    """Report what the run needed and did not find, with no usage line."""
+    sys.stdout.flush()
+    print(f"prg: {message}", file=sys.stderr)
+    return EXIT_ERROR
 
-    A command word and nothing else is a question and gets documentation,
-    exit 0. Any other shortfall in the path slots is a slip and gets an
-    error, exit 1. argparse keeps the vocabulary it owns: an unknown command,
-    an unknown flag, or a bad value, exiting 2.
-    """
+
+def runtime_error(message):
+    """Report a run that stopped partway, naming what was written."""
+    sys.stdout.flush()
+    print(f"prg: {message}", file=sys.stderr)
+    return EXIT_ERROR
+
+
+def main(argv=None):
+    """Parse arguments, run the matching command, return an exit code."""
     tokens = list(sys.argv[1:] if argv is None else argv)
 
     if not tokens:
@@ -110,7 +128,7 @@ def main(argv=None):
         return EXIT_OK
 
     if len(tokens) == 1 and tokens[0] in COMMANDS:
-        print(COMMANDS[tokens[0]].module.__doc__.strip())
+        print(COMMANDS[tokens[0]].bare())
         return EXIT_OK
 
     parser = build_parser()
@@ -121,48 +139,28 @@ def main(argv=None):
 
     paths = leading_paths(tokens[1:])
 
-    # Answered here rather than through the table, and after parsing rather
-    # than before it, so a flag after the word is argparse's unknown flag,
-    # exit 2, instead of prg's own slip.
-    if args.command == "version":
-        if paths:
-            return usage_error(
-                VERSION_USAGE, f"version takes nothing after it: {paths[0]!r}"
-            )
-        print(version_line())
-        return EXIT_OK
-
     command = COMMANDS[args.command]
 
     if len(paths) < len(command.slots):
         needed = " and ".join(command.slots)
         if len(command.slots) > 1:
             needed = f"both {needed}"
-        return usage_error(command.module.USAGE, f"{args.command} needs {needed}")
+        return usage_error(command.usage, f"{args.command} needs {needed}")
 
     if len(paths) > len(command.slots):
         stray = paths[len(command.slots)]
-        last = command.slots[-1]
+        last = command.slots[-1] if command.slots else "it"
         return usage_error(
-            command.module.USAGE,
+            command.usage,
             f"{args.command} takes nothing after {last}: {stray!r}",
         )
 
-    # Each command's run() takes what that command needs, so the call is spelled
-    # out rather than driven off the table. The table answers what is the same
-    # for every command: its documentation, its usage line, and its slots.
     try:
-        if args.command == "generate":
-            cli_generate.run(paths[0], paths[1], args)
-        else:
-            cli_inspect.run(paths[0], args)
-    except PRGError as failure:
-        # A readiness failure is the verdict on a report already printed, so
-        # stdout goes out first. Redirected, it block-buffers while stderr does
-        # not, and the verdict would otherwise arrive ahead of what it judges.
-        sys.stdout.flush()
-        print(f"prg: {failure}", file=sys.stderr)
-        return EXIT_ERROR
+        command.action(paths, args)
+    except errors.ReadinessError as failure:
+        return readiness_error(str(failure))
+    except errors.RuntimeFailure as failure:
+        return runtime_error(str(failure))
 
     return EXIT_OK
 

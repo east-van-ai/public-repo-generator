@@ -78,10 +78,11 @@
 # the commits down oldest first.
 """
 
-from prg import generator, report
+from prg import errors, generator, report
 
 HELP = "Rebuild TARGET from SOURCE's release tags"
 USAGE = "prg generate SOURCE TARGET [--dry-run | --commit] [options]"
+SLOTS = ("SOURCE", "TARGET")
 
 # Terser than `inspect`'s answer to the same question, and deliberately. Here a
 # missing identity appears again among the failures, which carries the
@@ -139,7 +140,7 @@ def run(source, target, args):
     )
 
     if ingredients.failures:
-        raise generator.PRGError(
+        raise errors.ReadinessError(
             "not ready to build\n  " + "\n  ".join(ingredients.failures)
         )
 

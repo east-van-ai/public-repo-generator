@@ -46,6 +46,7 @@ from prg import generator, report
 
 HELP = "List the tags that would become commits"
 USAGE = "prg inspect SOURCE [options]"
+SLOTS = ("SOURCE",)
 
 # Naming the consequence is what makes a missing identity a report rather than
 # a shrug. `inspect` passes either way, so this line is the only place the part

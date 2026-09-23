@@ -3,6 +3,18 @@
 Why `prg`'s command surface works the way it does. What each command accepts,
 what it prints, what it exits with, and what each flag decides.
 
+## Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| 0 | success, and documentation |
+| 1 | `prg`'s own error |
+| 2 | argparse's error: an unknown command, an unknown flag, or a bad value |
+
+Exit 1 covers what was typed and what was missing alike: a path missing or one
+too many, a tag, bound, or marker refused, an ingredient a build needs, and a
+build that stopped part-way.
+
 ## Positions are decided, not inferred
 
 The command word sits at `sys.argv[1]`, `SOURCE` at `argv[2]`, and `TARGET` at
@@ -12,9 +24,9 @@ elsewhere is discarded.
 Argparse accepts more than the documented grammar, and how much more depends on
 the interpreter. `prg generate . --commit ./public-repo` is a usage error on
 Python 3.9 and a finished build on Python 3.14, which fills a trailing optional
-positional from a token following a flag. `prg` supports both. One command line
-carrying two meanings across the supported range is worse than either meaning
-on its own.
+positional from a token following a flag. `prg` supports both versions. One
+command line carrying two meanings across the supported range is worse than
+either meaning on its own.
 
 Reading the slots settles it in `prg`'s own code, so the grammar is the same
 everywhere. Paths first, then flags.
@@ -89,10 +101,10 @@ The flag sits on the root parser and nowhere else, so `prg generate --version`
 is an unknown flag, exit 2. Asking what the tool is has one place to be asked,
 and the tool answers it rather than a command.
 
-The word is answered outside the command table. It has no path slot, no
-options, and no documentation of its own to print, which is the whole of what
-that table holds. Anything following it is a stray, exit 1. A flag following it
-is argparse's unknown flag, exit 2, because the word is a subparser carrying
+The word is a row in the command table like the others, with no path slots.
+Typed bare or run, it answers with the same line, since running it is the
+answer. Anything following it is a stray, exit 1. A flag following it is
+argparse's unknown flag, exit 2, because the word is a subparser carrying
 nothing.
 
 ## Dry run by default
@@ -102,28 +114,25 @@ nothing.
 
 ### What a dry run prints
 
-The values the build would use, then the plan it would follow. One line per
-release: the tag name and the uniform timestamp it would receive. Then a count.
-
-It is the same table `inspect` prints. Both read the same plan, so a preview
-cannot drift away from the build it is previewing.
+The values the build would use, then the plan it would follow: the release
+table `inspect` prints, and a count. Both read the same plan, so a preview
+cannot drift away from the build it is previewing. A real build prints the same
+page, then lays the plan down.
 
 Nothing is extracted, so a dry run says nothing about which files would ship.
 What it does check is the ingredient list `preflight` runs, and that is where
 the failures worth meeting before `--commit` get met.
 
-A real build prints the plan, then lays it down. So the dry run is the build's
-own plan, not a second description of it written alongside.
-
 ## The verdict is not the report
 
-All three print the same page. The exit code is what differs.
+With an identity missing, all three print the same page. The exit code is what
+differs.
 
 | Command | Prints | Exit |
 | --- | --- | --- |
 | `inspect` | the values and the table | 0 |
-| dry run | the values, the failures, and the table | 1 |
-| `--commit` | the same, and that nothing was written | 1 |
+| dry run | the values, the table, and the failures | 1 |
+| `--commit` | the same, and writes nothing | 1 |
 
 `inspect` answers which releases cross over and at what time. That answer holds
 whether or not an identity is configured, so a missing one is reported and the
@@ -134,9 +143,8 @@ before `--commit` meets them is the reason it exists. It prints everything first
 A dry run that stopped at the first missing ingredient would drip-feed them, one
 run per fix, while already knowing all of them.
 
-`--commit` fails the same way and adds that nothing was written. There is no
-second code path. The dry run is the build's own gate rather than a description
-of one.
+`--commit` fails the same way, before anything is written. There is no second
+code path. The dry run is the build's own gate rather than a description of one.
 
 ## Readiness failures print no usage line
 
@@ -146,11 +154,12 @@ command line was correct and something it needed was missing, so a usage line
 answers a question nobody asked.
 
 The exit code does not move. Exit 1 is prg's own error and it covers both without
-stretching. What differs is what gets printed beside it.
+stretching. What differs is what gets printed beside it. A build that stopped
+part-way prints no usage line either, for the same reason.
 
 ## What `inspect` prints
 
-The values a build would use, then the tags that would become commits, latest
+The values a build would use, then the tags that would become commits, newest
 first. Two columns: the name, and the uniform timestamp it would receive. A
 third when a marker gives some release a message of its own.
 
@@ -222,7 +231,7 @@ in either way.
 
 The report says nothing about it. Which mode a build ran in is what the command
 line was, and the page carries no row for it. A page that claims less needs no
-qualifying; the row can arrive later, with something worth putting in it.
+qualifying.
 
 ## The sanitizer is named, not located
 
@@ -233,17 +242,15 @@ installed, and `PATH` is what says where it lives. A flag answering that questio
 too would be a second place for the answer to be wrong, and a build pointed at
 the wrong binary does not announce itself.
 
-What that costs is the ability to see which binary a build reached, which the
-flag carried when it held a path. Nothing pays that back for now. `which
-weed-out` answers it from the shell that ran the build, and one that is wrong
-there was going to be wrong either way.
+What that costs is seeing which binary a build reached. `which weed-out`
+answers it from the shell that ran the build, and one that is wrong there was
+going to be wrong either way.
 
 ## `--weed-out-keep` implies the sanitizer
 
-`--weed-out-keep` on its own turns the sanitizer on, with `weed-out` as the
-command. Naming extra keep entries is an intention to sanitize, so `prg` reads it
-as one. Refusing a command line whose meaning was never in doubt would be a
-second flag to type for nothing.
+`--weed-out-keep` on its own turns the sanitizer on. Naming extra keep entries is
+an intention to sanitize, so `prg` reads it as one. Refusing a command line whose
+meaning was never in doubt would be a second flag to type for nothing.
 
 Nothing about the failure moves. `weed-out` still has to be on `PATH`, and
 `preflight` reports a missing one exactly as it does for `--weed-out`. An
@@ -275,12 +282,11 @@ Refuse and stop. `prg` does not delete anything it did not create.
 
 ## Use of AI
 
-Both the use of AI and its disclosure are deliberate. Code and
-documentation in this project are written in collaboration with
-Artificial Intelligence (AI). The division of labour: the AI explores,
-challenges assumptions and edge cases, and drafts; the human
-initiates, drafts the designs, explores alongside the AI, reviews
-every change, and decides what gets committed.
+Both the use of AI and its disclosure are deliberate. Code and documentation in
+this project are written in collaboration with Artificial Intelligence (AI). The
+division of labour: the AI explores, challenges assumptions and edge cases, and
+drafts; the human initiates, drafts the designs, explores alongside the AI,
+reviews every change, and decides what gets committed.
 
 ---
 

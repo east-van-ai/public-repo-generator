@@ -13,8 +13,7 @@ import pytest
 from conftest import git, table
 
 from prg import generator
-from prg.args import EXIT_ERROR, EXIT_OK
-from prg.cli import main
+from prg.cli import EXIT_ERROR, EXIT_OK, main
 
 # The stub records every invocation, then does whatever the test asked for.
 STUB = """#!/usr/bin/env python3

@@ -11,13 +11,6 @@ from importlib import metadata
 from prg import cli_generate, cli_inspect
 from prg.generator import DEFAULT_TIME, DEFAULT_TZ, RELEASE_TAG_PATTERN
 
-# Argparse hardcodes 2 in `ArgumentParser.error()`, which calls `sys.exit`
-# itself, so EXIT_ARGPARSE never returns through `main` and is only asserted
-# against. See docs/CLI.md, "Positions are decided, not inferred".
-EXIT_OK = 0
-EXIT_ERROR = 1
-EXIT_ARGPARSE = 2
-
 PROG = "prg"
 """The word typed on the command line, which the parser and `version_line` share."""
 
@@ -108,17 +101,14 @@ def build_parser():
             "Public Repo Generator: build a curated public repo from a private one."
         ),
     )
-    parser.add_argument(
-        "--version",
-        action="version",
-        version=version_line(),
-        help="Print the installed version and exit.",
-    )
+
     subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
 
-    # Carries no arguments and no flags, which is what makes argparse reject
-    # `prg version --tz gmt` as an unknown flag. `main` prints the line.
-    subparsers.add_parser("version", help="Print the installed version and exit.")
+    version_help = "Print the installed version and exit."
+    parser.add_argument(
+        "--version", action="version", version=version_line(), help=version_help
+    )
+    subparsers.add_parser("version", help=version_help)
 
     generate = subparsers.add_parser(
         "generate", help=cli_generate.HELP, description=cli_generate.HELP

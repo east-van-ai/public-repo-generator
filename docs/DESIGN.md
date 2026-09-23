@@ -68,8 +68,8 @@ from the source before any signing happens.
 Two things settle it, and the format's name is neither. One is whether the
 signature embeds a timestamp: OpenPGP always does, an SSHSIG never does, and
 freezing the signing clock is what makes an OpenPGP build repeat. The other is
-whether the algorithm is deterministic: ed25519 is, and ECDSA is not, since
-three SSH signatures over identical bytes come back different every time. So an
+whether the algorithm is deterministic: ed25519 is, and ECDSA is not. Three
+ECDSA signatures over identical bytes come back as three different ones. So an
 SSH ECDSA key drifts and an ed25519 OpenPGP key drifts too. Read each row as
 the pair it names rather than as its format.
 
@@ -124,18 +124,14 @@ exists, so there is nothing worth recovering, and a preview would leave
 That one entry is the whole of what `prg` protects. Nothing else is defended: a
 tag whose keep list does not name `.weed-out-ignore` ships without it, since the
 keep list is a fact about the private repo and the public one does not have to
-carry it. Nothing is checked afterwards either. Whether the entry covers
-everything under `.git` is `weed-out`'s own invariant, and a caller cannot do
-better than report what came back. The one thing `prg` still looks at is whether
-anything survived at all, which is a question about the commit it is about to
-make.
+carry it. Nothing is checked afterwards either. Keeping everything under `.git`
+once `.git/` is named is a rule `weed-out` enforces itself, and a caller cannot
+do better than report what came back.
 
 One of `weed-out`'s refusals can never reach a `prg` user. `weed-out --commit`
 stops when no keep list resolves at all, since silence there is likelier to be a
 forgotten argument than an instruction to empty the directory. A run from `prg`
 always carries at least `.git/`, so that refusal never fires.
-
-The source repo is only ever read. Nothing is checked out in place there.
 
 ## One public commit per release tag
 
@@ -215,9 +211,8 @@ tree is the whole instruction.
 Emptying a directory is the one destructive thing `prg` does, and it is confined
 to a directory `prg` created, since `preflight` refuses a target that already
 exists. No scratch directory stands between the source and the target, and the
-sanitizer does not need one either: it runs where the tree stands, with `.git/`
-added to the keep list by `prg`. Care is what keeps the repository out of the
-blast radius, not distance.
+sanitizer does not need one either, since it runs where the tree stands. Care is
+what keeps the repository out of the blast radius, not distance.
 
 `--allow-empty` covers three cases. Two tags on one commit, two releases whose
 trees match, and a sanitized tree that came out with nothing in it. All three
@@ -413,8 +408,8 @@ same reason: one resolution is what stops the report and the commits
 disagreeing.
 
 `-S` on every commit rather than a reliance on `commit.gpgsign`. A key resolved
-for this build is already the instruction to sign. With no key, `--no-gpg-sign`
-stays and the build is unsigned.
+for this build is already the instruction to sign. With no key, every commit
+carries `--no-gpg-sign` and the build is unsigned.
 
 The report prints the key directly under the author, because the two are halves
 of one decision and reading them together is the point.
@@ -473,9 +468,10 @@ keeping remote access out of the tool means it never needs credentials.
 
 Every check `prg` can make happens before any of the work. Git on `PATH`, and
 `tar` beside it. The source being a repo with releases in it. `--start` and
-`--end` naming ones that are there. `--author` parsing. An identity to build
-under. A signing key that names the same account as that identity. A target that
-does not exist. `weed-out` on `PATH`, when a sanitizer was asked for.
+`--end` naming ones that are there. Every `prg-msg/` marker naming a release and
+carrying a message. `--author` parsing. An identity to build under. A signing
+key that names the same account as that identity. A target that does not exist.
+`weed-out` on `PATH`, when a sanitizer was asked for.
 
 `tar` is on that list because extracting a release is `git archive` piped into
 it, which makes it the second binary every build shells out to, checked whether
@@ -497,19 +493,19 @@ since an unsigned build is still a build. A key that disagrees with the author
 is, because what it produces looks finished and is not.
 
 Some ingredients are fatal and the rest are reported. Without git, with a source
-holding no releases, or with a range naming none, there is no report to produce.
-The fatal ones raise where the fact is learned, which for the range means while
-the tags are being read, not in `preflight`. A missing identity is different:
-the table can still be printed, and printing it is how the gap gets found.
+holding no releases, with a range naming none, or with a marker refused, there
+is no report to produce. The fatal ones raise where the fact is learned, which
+for the range and the markers means while the tags are being read, not in
+`preflight`. A missing identity is different: the table can still be printed,
+and printing it is how the gap gets found.
 
 ## Use of AI
 
-Both the use of AI and its disclosure are deliberate. Code and
-documentation in this project are written in collaboration with
-Artificial Intelligence (AI). The division of labour: the AI explores,
-challenges assumptions and edge cases, and drafts; the human
-initiates, drafts the designs, explores alongside the AI, reviews
-every change, and decides what gets committed.
+Both the use of AI and its disclosure are deliberate. Code and documentation in
+this project are written in collaboration with Artificial Intelligence (AI). The
+division of labour: the AI explores, challenges assumptions and edge cases, and
+drafts; the human initiates, drafts the designs, explores alongside the AI,
+reviews every change, and decides what gets committed.
 
 ---
 

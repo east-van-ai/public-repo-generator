@@ -19,7 +19,7 @@ from collections import namedtuple
 from datetime import datetime, timedelta, timezone
 from itertools import groupby
 
-from prg import gitio, sanitizer
+from prg import errors, gitio, sanitizer
 
 RELEASE_TAG_PATTERN = "v*"
 PUBLIC_BRANCH = "main"
@@ -88,10 +88,6 @@ is to say.
 """
 
 
-class PRGError(Exception):
-    """An error prg raises itself. The CLI turns it into exit code 1."""
-
-
 def release_tags(source):
     """Return the release tags reachable from main/master, oldest first.
 
@@ -104,7 +100,7 @@ def release_tags(source):
     them, so the tag name breaks the tie: arbitrary, but stable.
     """
     if not gitio.is_repo(source):
-        raise PRGError(f"not a git repo: {source}")
+        raise errors.ReadinessError(f"not a git repo: {source}")
 
     try:
         branch = gitio.default_branch(source)
@@ -113,10 +109,10 @@ def release_tags(source):
             for name in gitio.release_tags(source, branch, RELEASE_TAG_PATTERN)
         ]
     except gitio.GitError as failure:
-        raise PRGError(str(failure)) from failure
+        raise errors.ReadinessError(str(failure)) from failure
 
     if not releases:
-        raise PRGError(
+        raise errors.ReadinessError(
             f"no {RELEASE_TAG_PATTERN} tags reachable from {branch} in {source}"
         )
 
@@ -149,17 +145,17 @@ def release_messages(source, releases):
     try:
         markers = gitio.message_tags(source, MESSAGE_TAG_PATTERN)
     except gitio.GitError as failure:
-        raise PRGError(str(failure)) from failure
+        raise errors.ReadinessError(str(failure)) from failure
 
     messages = {}
     for name, annotated, subject in markers:
         version = name[len(MESSAGE_TAG_PREFIX) :]
         if version not in known:
-            raise PRGError(f"{name} names no release tag: {version}")
+            raise errors.ReadinessError(f"{name} names no release tag: {version}")
         if not annotated:
-            raise PRGError(f"{name} is lightweight and carries no message")
+            raise errors.ReadinessError(f"{name} is lightweight and carries no message")
         if not subject:
-            raise PRGError(f"{name} carries an empty message")
+            raise errors.ReadinessError(f"{name} carries an empty message")
         messages[version] = subject
 
     return messages
@@ -176,7 +172,7 @@ def bound_index(releases, name, flag):
         if release.name == name:
             return index
 
-    raise PRGError(f"{flag} names no release tag: {name}")
+    raise errors.ReadinessError(f"{flag} names no release tag: {name}")
 
 
 def span(releases, start, end):
@@ -198,7 +194,7 @@ def span(releases, start, end):
     last = len(releases) - 1 if end is None else bound_index(releases, end, "--end")
 
     if first > last:
-        raise PRGError(f"--end {end} comes before --start {start}")
+        raise errors.ReadinessError(f"--end {end} comes before --start {start}")
 
     return releases[first : last + 1]
 
@@ -328,7 +324,7 @@ def preflight(source, target=None, author=None, sanitize=False, sign=True):
     still `release_tags`' to judge, and that judgement is fatal too.
     """
     if not gitio.git_available():
-        raise PRGError("git is not on PATH")
+        raise errors.ReadinessError("git is not on PATH")
 
     failures = []
 
@@ -454,7 +450,7 @@ def author_identity(author):
 
     identity = parse_identity(author)
     if identity is None:
-        raise PRGError(f'--author is not "Name <email>": {author}')
+        raise errors.ReadinessError(f'--author is not "Name <email>": {author}')
     return identity
 
 
@@ -511,14 +507,13 @@ def reconstruct(build, commits, identity, signing):
     inside re-raises, so the first failure ends the build either way, and the
     loop variable is still bound to the release that failed.
     """
-    os.makedirs(build.target)
-
     try:
+        os.makedirs(build.target)
         gitio.init(build.target, PUBLIC_BRANCH)
         gitio.set_identity(build.target, *identity)
         gitio.set_signing(build.target, signing)
-    except gitio.GitError as failure:
-        raise PRGError(str(failure)) from failure
+    except (OSError, gitio.GitError) as failure:
+        raise errors.RuntimeFailure(str(failure)) from failure
 
     try:
         for commit in commits:
@@ -530,4 +525,4 @@ def reconstruct(build, commits, identity, signing):
             gitio.commit(build.target, commit.message, commit.stamp, identity, signing)
             gitio.tag(build.target, commit.name)
     except (gitio.GitError, sanitizer.SanitizeError, OSError) as failure:
-        raise PRGError(f"stopped at {commit.name}: {failure}") from failure
+        raise errors.RuntimeFailure(f"stopped at {commit.name}: {failure}") from failure

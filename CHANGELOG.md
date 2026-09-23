@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-09-23
+
+### Fixed
+
+- Failing to create the target directory now reports like any other error,
+  exit 1, instead of crashing with a traceback.
+
 ## [0.4.2] - 2026-09-08
 
 ### Added
@@ -59,7 +66,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - A preflight stage. Both commands check the ingredients before any work starts:
   git on `PATH`, an author identity, a signing key that agrees with it, a target
   that does not exist, and a sanitizer that does.
-- A readiness failure prints the whole report before failing, and carries no usage line.
+- A readiness failure prints the whole report before failing, and carries no
+  usage line.
 - Both commands report the values a build would use, above the release table.
 - `inspect` reports a missing identity there and still exits 0.
 - Generated commits are signed with the key configured where `prg` runs, in
@@ -86,8 +94,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - `prg generate SOURCE TARGET --commit` builds a repo. One empty commit per
   release tag, stamped, tagged, and descending from the one before it, on `main`.
-- `prg inspect SOURCE` lists the release tags that would become commits, oldest first,
-  with the uniform timestamp each one would carry.
+- `prg inspect SOURCE` lists the release tags that would become commits, oldest
+  first, with the uniform timestamp each one would carry.
 - `--tz`, `--time`, and `--start` on `inspect`, sharing `generate`'s defaults
   so the preview matches the build.
 - Tests for `generate`: a dry run writes nothing, an existing target is refused, and
@@ -116,11 +124,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- DESIGN.md records the release-tag model, the clean-room build, and the timestamp rules.
+- DESIGN.md records the release-tag model, the clean-room build, and the
+  timestamp rules.
 - `inspect` subcommand, alongside `generate`.
-- `--author` and `--start`, and a `--dry-run`/`--commit` pair with dry run as the default.
-- `gitio`, the layer that talks to git. Read-only so far: reachable release tags, commit
-  dates, and tag messages.
+- `--author` and `--start`, and a `--dry-run`/`--commit` pair with dry run as
+  the default.
+- `gitio`, the layer that talks to git. Read-only so far: reachable release
+  tags, commit dates, and tag messages.
 - Tests covering the CLI surface and the git layer.
 - `generate` takes `SOURCE` and `TARGET` as positional arguments.
 - `prg` is a regular package with `src/prg/__init__.py`.
