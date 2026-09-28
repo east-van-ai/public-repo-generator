@@ -1,86 +1,56 @@
 """
-# ~~~ ~~~ ~~~ ~~~ ~~~ ~~~ ~~~ prg generate ~~~ ~~~ ~~~ ~~~ ~~~ ~~~ ~~~
-#
-# https://github.com/east-van-ai/public-repo-generator
-#
-# Rebuild TARGET from SOURCE's v* release tags, one commit per tag. Each commit
-# carries the date of the commit its tag points at, and with --weed-out each
-# tag's tree is sanitized on the way through.
-#
-# Usage:
-#
-#    prg generate SOURCE TARGET [--dry-run | --commit] [options]
-#
-# SOURCE  an existing git repo.
-# TARGET  the public repo. It must not exist yet.
-#
-# Options:
-#
-#    --tz {local,gmt}      timezone for the uniform timestamp (default: local)
-#    --time HH:MM:SS       fixed time for every commit (default: 12:00:00)
-#    --author IDENTITY     "Name <email>" for author and committer
-#    --weed-out            run the weed-out sanitizer (default: off)
-#    --weed-out-keep LIST  extra keep entries, comma-separated
-#    --start TAG           begin from this release tag (default: earliest v*)
-#    --end TAG             stop at this release tag (default: latest v*)
-#    --no-sign             build unsigned, whatever the git config says
-#    --dry-run             report the plan and write nothing. The default.
-#    --commit              actually build the repo.
-#
-# Dry run is the default. `--commit` is what makes prg write.
-#
-# Both modes check the ingredients first and print what a build would use: the
-# identity, the signing key, the zone. A missing one is reported with everything
-# else, so a run names all of them at once rather than one per attempt, and then
-# exits 1 without writing.
-#
-# `--weed-out` and `--weed-out-keep`: cf. https://github.com/east-van-ai/weed-out
-# The sanitizer is off unless asked for. `--weed-out` turns it on, and so does
-# `--weed-out-keep` on its own, since naming keep entries is an intention to
-# sanitize. `prg` adds `--keep ".git/"` itself, so a keep list that never
-# thought about the repository cannot take it out. Nothing else is protected.
-#
-# Each release is filtered by the `.weed-out-ignore` file in its own tree, plus
-# whatever `--weed-out-keep` names. A release carrying no such file has the flag
-# and nothing else, so sanitizing one without it keeps `.git/` alone and commits
-# an empty tree. That is not refused: the empty commit is the answer, so one run
-# shows every release it applies to rather than stopping at the first.
-#
-# Keep entries are weed-out's patterns, comma-separated. A pattern with no `/`
-# matches a filename at any depth, so `*.md` reaches every markdown file in the
-# tree; one containing a `/` matches the path instead, so `src/*.py` reaches
-# only that directory. Watch `*.*`, which is not "keep everything": it wants a
-# dot in the name, so `LICENSE` and `Makefile` fall out of it.
-# `--weed-out-keep "*"` is the entry that keeps every file.
-#
-# `--no-sign`: Commits are signed with the key configured where prg runs, and
-# unsigned when there is none. The key and the author have to name one account,
-# since a host judges the address against the account holding the key, and prg
-# refuses a pair that disagrees. `--no-sign` is the way past it, and the way to
-# a build whose hashes can be compared with another's.
-#
-# `--start` and `--end`: These  are inclusive, and either can stand alone. A
-# bound naming no release tag is an error, and so is an `--end` earlier than
-# the `--start` beside it.
-#
-# tags: Each public commit says its tag name, `v2.3.4` and nothing else. A
-# release with an annotated `prg-msg/v2.3.4` tag beside it in SOURCE says that
-# tag's message instead. The marker does not cross over, and a release tag's
-# own annotation never does. `prg inspect` is where the prose gets read before
-# it publishes.
-#
-# errors: A marker naming no release tag is an error, and so is one carrying no
-# message at all, a lightweight tag included. A marker for a release outside
-# `--start` and `--end` is not an error: that release is simply not in this
-# build.
-#
-# The table reads newest first, the way `git log` does. The build still lays
-# the commits down oldest first.
+        Public Repo Generator (prg) -- Generate
+
+https://github.com/east-van-ai/public-repo-generator
+
+Build a new public repo from a private repo's v* release tags, one commit per
+tag. Each commit carries the date of the commit its tag points at, and with
+--weed-out each tag's tree is sanitized on the way through.
+
+A dry run and `--commit` both check the ingredients first and print what a
+build would use: the identity, the signing key, the zone. Every missing one
+is reported together, and then prg exits 1 without writing.
+
+`--weed-out`, `--weed-out-keep`: the sanitizer is off unless asked for.
+`--weed-out` turns it on, and so does `--weed-out-keep` on its own. prg adds
+`--keep ".git/"` itself and protects nothing else. The sanitizer is weed-out,
+https://github.com/east-van-ai/weed-out
+
+Each release is filtered by the `.weed-out-ignore` file in its own tree, plus
+whatever `--weed-out-keep` names. A release with no such file keeps `.git/`
+alone, so it is committed as an empty tree, and the build carries on.
+
+Keep entries are weed-out's patterns. A pattern with no `/` matches a
+filename at any depth, so `*.md` reaches every markdown file in the tree. One
+containing a `/` matches the path instead, so `src/*.py` reaches only that
+directory. `*.*` wants a dot in the name, so `LICENSE` and `Makefile` fall
+out of it. `--weed-out-keep "*"` keeps every file.
+
+`--no-sign`: commits are signed with the key configured where prg runs, and
+unsigned when there is none. prg refuses a key and an author that name two
+different accounts. `--no-sign` is the way past it, and the way to a build
+whose hashes can be compared with another's.
+
+`--start`, `--end`: both are inclusive, and either can stand alone. A bound
+naming no release tag is an error, and so is an `--end` earlier than the
+`--start` beside it.
+
+`prg-msg/`: each public commit says its tag name, `v2.3.4` and nothing else.
+A release with an annotated `prg-msg/v2.3.4` tag beside it in the private
+repo says that tag's message instead. The marker does not cross over, and a
+release tag's own annotation never does. `prg inspect` shows the messages
+first.
+
+A marker naming no release tag is an error, and so is one carrying no message
+at all, a lightweight tag included. A marker for a release outside `--start`
+and `--end` is ignored.
+
+The table reads newest first. The build lays the commits down oldest first.
 """
 
 from prg import errors, generator, report
 
-HELP = "Rebuild TARGET from SOURCE's release tags"
+HELP = "rebuild TARGET from SOURCE's v* release tags"
 USAGE = "prg generate SOURCE TARGET [--dry-run | --commit] [options]"
 SLOTS = ("SOURCE", "TARGET")
 

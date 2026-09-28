@@ -12,32 +12,58 @@ import pytest
 from prg import args, cli, cli_generate, cli_inspect, generator
 
 
-def test_bare_prg_prints_the_module_documentation(capsys):
-    """Not argparse's help. The banner in cli.py is what a bare prg answers."""
+def test_bare_prg_prints_the_banner_then_argparse_help(capsys):
+    """The banner says what argparse cannot; `--help` carries the grammar."""
+    with pytest.raises(SystemExit):
+        cli.main(["--help"])
+    help_text = capsys.readouterr().out
     assert cli.main([]) == cli.EXIT_OK
     printed = capsys.readouterr().out
+    assert printed.startswith("# ===")
     assert "East Van AI" in printed
-    assert "generate" in printed
-    assert "inspect" in printed
+    assert printed.rstrip().endswith(help_text.rstrip())
 
 
 def test_the_banner_documents_the_exit_codes(capsys):
     """All three, since the contract is what a caller scripts against."""
     cli.main([])
     banner = capsys.readouterr().out
-    assert "Exit codes:" in banner
+    assert "exit codes:" in banner
     for code in (cli.EXIT_OK, cli.EXIT_ERROR, cli.EXIT_ARGPARSE):
         assert f"    {code}:    " in banner
 
 
+def test_the_banner_names_source_and_target_as_paths(capsys):
+    """Both slots take a path, and the heading says so once."""
+    cli.main([])
+    banner = capsys.readouterr().out
+    assert "\npaths:\n  SOURCE    an existing git repo" in banner
+    assert "\n  TARGET    the public repo" in banner
+
+
+def test_the_banner_points_to_the_command_pages(capsys):
+    """Only a bare command word prints its manual, so the banner says so."""
+    cli.main([])
+    printed = capsys.readouterr().out
+    assert "\nRun a command with nothing after it for its own page.\n" in printed
+
+
+def argparse_help(command, capsys):
+    """Return what `prg COMMAND --help` prints, argparse's own page."""
+    with pytest.raises(SystemExit):
+        cli.main([command, "--help"])
+    return capsys.readouterr().out
+
+
 @pytest.mark.parametrize("command", ["generate", "inspect"])
 def test_a_bare_command_word_prints_its_own_documentation(command, capsys):
-    """In the house voice, not argparse's. The banner belongs to bare prg."""
+    """The docstring, then argparse's help. The banner belongs to bare prg."""
+    help_text = argparse_help(command, capsys)
     assert cli.main([command]) == cli.EXIT_OK
     printed = capsys.readouterr().out
-    assert f"prg {command}" in printed
-    assert "Usage:" in printed
-    assert "usage: prg" not in printed
+    title = f"Public Repo Generator (prg) -- {command.capitalize()}"
+    assert printed.splitlines()[0].strip() == title
+    assert printed.rstrip().endswith(help_text.rstrip())
     assert "East Van AI" not in printed
 
 
@@ -50,6 +76,14 @@ def test_the_options_are_documented_once(capsys):
 
     assert "--weed-out" in command_doc
     assert "--weed-out" not in banner
+
+
+@pytest.mark.parametrize(
+    "command, usage", [("generate", cli_generate.USAGE), ("inspect", cli_inspect.USAGE)]
+)
+def test_argparse_help_shows_the_documented_usage(command, usage, capsys):
+    """Paths before flags, as documented, rather than argparse's own ordering."""
+    assert argparse_help(command, capsys).splitlines()[0] == f"usage: {usage}"
 
 
 def test_a_half_typed_generate_is_an_error(capsys):
@@ -101,14 +135,29 @@ def test_a_path_too_many_is_prgs_own_error(argv, usage, capsys):
     assert usage in printed
 
 
-def test_the_usage_line_is_written_once():
-    """The docstring spells out the same line the error prints.
+@pytest.mark.parametrize(
+    "argv, prefix",
+    [
+        (["--vers"], "--vers"),
+        (["inspect", "source", "--st", "v0.1.0"], "--st"),
+    ],
+)
+def test_a_flag_prefix_is_not_the_flag(argv, prefix, capsys):
+    """Only the documented grammar is accepted, on the root and on each command."""
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(argv)
+    assert exit_info.value.code == cli.EXIT_ARGPARSE
+    assert f"unrecognized arguments: {prefix}" in capsys.readouterr().err
 
-    A module docstring cannot interpolate, so this is what keeps the two in
-    agreement now that the doc no longer quotes the constant.
-    """
-    assert cli_generate.USAGE in cli_generate.__doc__
-    assert cli_inspect.USAGE in cli_inspect.__doc__
+
+def test_a_prefix_of_commit_builds_nothing(repo, tmp_path, capsys):
+    """A subparser inherits no settings, so `generate` needs its own."""
+    target = tmp_path / "target"
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["generate", str(repo), str(target), "--com"])
+    assert exit_info.value.code == cli.EXIT_ARGPARSE
+    assert "unrecognized arguments: --com" in capsys.readouterr().err
+    assert not target.exists()
 
 
 def test_generate_rejects_a_source_that_is_not_a_repo(capsys):
@@ -195,6 +244,48 @@ def test_the_version_names_the_program_not_the_distribution(capsys):
     printed = capsys.readouterr().out.strip()
     assert printed.startswith("prg ")
     assert "public-repo-generator" not in printed
+
+
+def test_argparse_help_lists_both_version_spellings(capsys):
+    """Both spellings exist, and argparse names `version` in its errors anyway."""
+    with pytest.raises(SystemExit) as exit_attempt:
+        cli.main(["--help"])
+    assert exit_attempt.value.code == cli.EXIT_OK
+    printed = capsys.readouterr().out
+    assert "    version " in printed
+    assert "  --version " in printed
+
+
+@pytest.mark.parametrize("command", ["generate", "inspect"])
+def test_a_command_page_files_its_slots_under_paths(command, capsys):
+    """The same heading as `prg --help`, rather than argparse's own."""
+    cli.main([command])
+    page = capsys.readouterr().out
+    assert "\npaths:\n  SOURCE " in page
+    assert "positional arguments" not in page
+
+
+def test_argparse_help_carries_both_usages_and_the_paths(capsys):
+    """`prg --help` reads like the banner's top half."""
+    with pytest.raises(SystemExit):
+        cli.main(["--help"])
+    printed = capsys.readouterr().out
+    assert cli_generate.USAGE in printed
+    assert cli_inspect.USAGE in printed
+    assert "\npaths:\n" in printed
+
+
+@pytest.mark.parametrize("argv", [["--help"], ["generate"], ["inspect"]])
+def test_help_prints_no_colour(argv, monkeypatch, capsys):
+    """FORCE_COLOR stands in for a terminal. Below 3.14 there is no colour to strip."""
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("PYTHON_COLORS", raising=False)
+    try:
+        cli.main(argv)
+    except SystemExit:
+        pass
+    assert "\x1b[" not in capsys.readouterr().out
 
 
 def test_a_command_may_not_be_asked_for_the_version():

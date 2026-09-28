@@ -5,6 +5,7 @@ a valid invocation looks like in the first place.
 """
 
 import argparse
+import sys
 from datetime import time
 from importlib import metadata
 
@@ -13,6 +14,16 @@ from prg.generator import DEFAULT_TIME, DEFAULT_TZ, RELEASE_TAG_PATTERN
 
 PROG = "prg"
 """The word typed on the command line, which the parser and `version_line` share."""
+
+PATHS = """\
+paths:
+  SOURCE    an existing git repo, for `generate` and `inspect`.
+  TARGET    the public repo. `generate` needs it not to exist yet.
+  Both come right after COMMAND, then options in any order."""
+"""The section `prg --help` closes with, since the paths belong to no one command."""
+
+MONOCHROME = {"color": False} if sys.version_info >= (3, 14) else {}
+"""argparse's `color=` switch, from 3.14. Older versions print no colour."""
 
 
 def installed_version():
@@ -40,6 +51,21 @@ def version_line():
     return f"{PROG} {installed_version()}"
 
 
+def leading_paths(tokens):
+    """Return the tokens ahead of the first flag.
+
+    Every path comes before every flag, so the slots are read off the front of the
+    line. Argparse's own positional matches are discarded, since how much it
+    back-fills depends on the interpreter version.
+    """
+    paths = []
+    for token in tokens:
+        if token.startswith("-"):
+            break
+        paths.append(token)
+    return paths
+
+
 def clock_time(value):
     """Parse an HH:MM:SS argument, for argparse's `type=`.
 
@@ -64,28 +90,95 @@ def add_plan_flags(parser):
         "--tz",
         choices=["local", "gmt"],
         default=DEFAULT_TZ,
-        help="Timezone for the uniform timestamp (default: %(default)s)",
+        help="timezone for the uniform timestamp (default: %(default)s)",
     )
+    # clock_time is converted here rather than left as a string, so the default and
+    # a supplied value arrive as the same type without leaning on argparse putting
+    # string defaults through `type` for us.
     parser.add_argument(
         "--time",
         type=clock_time,
-        # Converted here rather than left as a string, so the default and a
-        # supplied value arrive as the same type without leaning on argparse
-        # putting string defaults through `type` for us.
         default=clock_time(DEFAULT_TIME),
         metavar="HH:MM:SS",
-        help=f"Fixed time for every commit (default: {DEFAULT_TIME})",
+        help=f"fixed time for every commit (default: {DEFAULT_TIME})",
     )
     parser.add_argument(
         "--start",
         metavar="TAG",
-        help=f"Begin from this release tag (default: earliest {RELEASE_TAG_PATTERN})",
+        help=f"begin from this release tag (default: earliest {RELEASE_TAG_PATTERN})",
     )
     parser.add_argument(
         "--end",
         metavar="TAG",
-        help=f"Stop at this release tag (default: latest {RELEASE_TAG_PATTERN})",
+        help=f"stop at this release tag (default: latest {RELEASE_TAG_PATTERN})",
     )
+
+
+def add_generate(subparsers):
+    """Add the `generate` subparser and return it."""
+    generate = subparsers.add_parser(
+        "generate",
+        help=cli_generate.HELP,
+        usage=cli_generate.USAGE,
+        allow_abbrev=False,
+    )
+    paths = generate.add_argument_group("paths")
+    paths.add_argument(
+        "source", metavar="SOURCE", nargs="?", help="the private repo to read"
+    )
+    paths.add_argument(
+        "target", metavar="TARGET", nargs="?", help="the public repo to create"
+    )
+    add_plan_flags(generate)
+    generate.add_argument(
+        "--author",
+        metavar="IDENTITY",
+        help='"Name <email>" for author and committer (default: git config)',
+    )
+    generate.add_argument(
+        "--weed-out",
+        action="store_true",
+        help="run the weed-out sanitizer over every release tree (default: off)",
+    )
+    generate.add_argument(
+        "--weed-out-keep",
+        metavar="LIST",
+        help="extra keep entries, comma-separated, added to every release; "
+        "turns the sanitizer on by itself",
+    )
+    generate.add_argument(
+        "--no-sign",
+        action="store_true",
+        help="build unsigned, whatever the git config says",
+    )
+    mode = generate.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="report the plan and write nothing (default)",
+    )
+    mode.add_argument(
+        "--commit",
+        action="store_true",
+        help="actually build the repo",
+    )
+    return generate
+
+
+def add_inspect(subparsers):
+    """Add the `inspect` subparser and return it."""
+    inspect = subparsers.add_parser(
+        "inspect",
+        help=cli_inspect.HELP,
+        usage=cli_inspect.USAGE,
+        allow_abbrev=False,
+    )
+    paths = inspect.add_argument_group("paths")
+    paths.add_argument(
+        "source", metavar="SOURCE", nargs="?", help="the private repo to read"
+    )
+    add_plan_flags(inspect)
+    return inspect
 
 
 def build_parser():
@@ -97,69 +190,32 @@ def build_parser():
     """
     parser = argparse.ArgumentParser(
         prog=PROG,
-        description=(
-            "Public Repo Generator: build a curated public repo from a private one."
-        ),
+        **MONOCHROME,
+        allow_abbrev=False,
+        usage=f"{cli_generate.USAGE}\n       {cli_inspect.USAGE}",
+        epilog=PATHS,
+        # Keeps the epilog's lines as written rather than joined into one paragraph.
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
     subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
 
-    version_help = "Print the installed version and exit."
+    add_generate(subparsers)
+    add_inspect(subparsers)
+
+    version_help = "print the installed version and exit"
     parser.add_argument(
         "--version", action="version", version=version_line(), help=version_help
     )
-    subparsers.add_parser("version", help=version_help)
-
-    generate = subparsers.add_parser(
-        "generate", help=cli_generate.HELP, description=cli_generate.HELP
-    )
-    generate.add_argument(
-        "source", metavar="SOURCE", nargs="?", help="Private repo to read"
-    )
-    generate.add_argument(
-        "target", metavar="TARGET", nargs="?", help="Public repo to create"
-    )
-    add_plan_flags(generate)
-    generate.add_argument(
-        "--author",
-        metavar="IDENTITY",
-        help='"Name <email>" for author and committer (default: git config)',
-    )
-    generate.add_argument(
-        "--weed-out",
-        action="store_true",
-        help="Run the weed-out sanitizer over every release tree "
-        "(default: off, nothing is filtered)",
-    )
-    generate.add_argument(
-        "--weed-out-keep",
-        metavar="LIST",
-        help="Extra keep entries, comma-separated, added to every release. "
-        "Turns the sanitizer on by itself",
-    )
-    generate.add_argument(
-        "--no-sign",
-        action="store_true",
-        help="Build unsigned, whatever the git config says",
-    )
-    mode = generate.add_mutually_exclusive_group()
-    mode.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Report the plan and write nothing. This is the default.",
-    )
-    mode.add_argument(
-        "--commit",
-        action="store_true",
-        help="Actually build the repo",
-    )
-
-    inspect = subparsers.add_parser(
-        "inspect", help=cli_inspect.HELP, description=cli_inspect.HELP
-    )
-    inspect.add_argument(
-        "source", metavar="SOURCE", nargs="?", help="Private repo to read"
-    )
-    add_plan_flags(inspect)
+    subparsers.add_parser("version", help=version_help, allow_abbrev=False)
 
     return parser
+
+
+def command_help(add_command):
+    """Return one command's own `--help` text, as argparse prints it.
+
+    `add_command` is `add_generate` or `add_inspect`.
+    """
+    subparsers = argparse.ArgumentParser(prog=PROG, **MONOCHROME).add_subparsers()
+    return add_command(subparsers).format_help()

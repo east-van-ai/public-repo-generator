@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-09-28
+
+### Changed
+
+- `docs/DESIGN.md` is rewritten to the why behind each decision, about a third
+  of its former length.
+- `docs/CLI.md` is rewritten to the why behind each command and flag.
+- The built-in help names SOURCE and TARGET as paths, and keeps to how rather
+  than why.
+- Bare `prg` and a bare command word each end with their `--help`, which now
+  shows the documented usage lines. The pages are plain text below the signature.
+
+### Fixed
+
+- A flag is accepted by its full name only. A prefix such as `--com` is an
+  unknown flag, exit 2, where it used to run as `--commit`.
+- Bare `prg` says that a command word typed alone prints its own page.
+  `--help` never reached that page, and nothing said it existed.
+
 ## [0.4.3] - 2026-09-23
 
 ### Fixed

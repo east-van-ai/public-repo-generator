@@ -1,50 +1,29 @@
 """
-# ~~~ ~~~ ~~~ ~~~ ~~~ ~~~ ~~~ prg inspect ~~~ ~~~ ~~~ ~~~ ~~~ ~~~ ~~~
-#
-# https://github.com/east-van-ai/public-repo-generator
-#
-# List the v* release tags in SOURCE that would become public commits, newest
-# first. Reads SOURCE and writes nothing.
-#
-# Usage:
-#
-#    prg inspect SOURCE [options]
-#
-# SOURCE  an existing git repo.
-#
-# Options:
-#
-#    --tz {local,gmt}    timezone for the uniform timestamp (default: local)
-#    --time HH:MM:SS     fixed time for every commit (default: 12:00:00)
-#    --start TAG         begin from this release tag (default: earliest v*)
-#    --end TAG           stop at this release tag (default: latest v*)
-#
-# First the values a build would use, then one line per tag: the tag name, and
-# the uniform timestamp its public commit would carry. Then a count.
-#
-# Newest first, the way `git log` reads, since that is the log being
-# previewed. A build still lays the commits down oldest first.
-#
-# A third column appears only when some release carries a `prg-msg/` tag,
-# whose message its public commit takes in place of the tag name. With no such
-# tag the column would print the first one again on every line.
-#
-# That column is where the prose gets read before it publishes, so `inspect` is
-# the review step for it. A release tag's own annotation still never crosses
-# over.
-#
-# The stamp is the one a build would use, so `inspect` takes the flags that
-# shape it. Releases sharing a date in the chosen zone are spaced a second
-# apart, oldest first. `--start` and `--end` come along for the same reason:
-# they decide which releases cross over, and both are inclusive.
-#
-# An unconfigured git identity is reported and nothing more. `inspect` answers
-# which releases cross over and when, and that answer holds either way. Exit 0.
+        Public Repo Generator (prg) -- Inspect
+
+https://github.com/east-van-ai/public-repo-generator
+
+List a private repo's v* release tags that would become public commits,
+newest first. Reads the repo and writes nothing.
+
+First the values a build would use, then one line per tag: the tag name, and
+the uniform timestamp its public commit would carry. Then a count. A build
+lays the commits down oldest first.
+
+A third column appears only when some release carries a `prg-msg/` tag. It
+shows the message that release's public commit takes in place of the tag
+name, so this is where the message gets read before it publishes. A release
+tag's own annotation never crosses over.
+
+Releases sharing a date in the chosen zone are spaced a second apart, oldest
+first. `--start` and `--end` are inclusive.
+
+An unconfigured git identity is reported, and `inspect` still exits 0.
 """
 
 from prg import generator, report
 
-HELP = "List the tags that would become commits"
+HELP = "list the v* release tags that would become commits"
 USAGE = "prg inspect SOURCE [options]"
 SLOTS = ("SOURCE",)
 
